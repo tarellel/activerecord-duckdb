@@ -1,0 +1,105 @@
+plugins:
+  - rubocop-performance
+  - rubocop-rake
+  - rubocop-rspec
+  - rubocop-thread_safety
+
+AllCops:
+  TargetRubyVersion: 3.4
+  NewCops: enable
+  UseCache: true
+
+Gemspec/RequiredRubyVersion:
+  Enabled: false
+
+Layout/LineLength:
+  Enabled: false
+
+Lint/DuplicateBranch:
+  Exclude:
+    - lib/active_record/connection_adapters/duckdb_adapter.rb
+
+Lint/UnusedMethodArgument:
+  Enabled: false
+
+Metrics/AbcSize:
+  Enabled: false
+
+Metrics/BlockLength:
+  Enabled: false
+
+Metrics/ClassLength:
+  Enabled: false
+
+Metrics/CyclomaticComplexity:
+  Enabled: false
+
+Metrics/MethodLength:
+  Enabled: false
+
+Metrics/ModuleLength:
+  Enabled: false
+
+Metrics/ParameterLists:
+  Enabled: false
+
+Naming/FileName:
+  Exclude:
+    - lib/activerecord-duckdb.rb
+    - spec/activerecord-duckdb_spec.rb
+
+Metrics/PerceivedComplexity:
+  Enabled: false
+
+Naming/MethodParameterName:
+  Enabled: false
+
+Naming/PredicatePrefix:
+  Enabled: false
+
+Style/Documentation:
+  Enabled: false
+
+Style/ParallelAssignment:
+  Enabled: false
+
+Style/RedundantAssignment:
+  Enabled: false
+
+Style/StringLiterals:
+  EnforcedStyle: single_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+##### RSpec specific
+RSpec/DescribeClass:
+  Exclude:
+    - spec/activerecord-duckdb_spec.rb
+
+RSpec/ExampleLength:
+  Enabled: false
+
+RSpec/IndexedLet:
+  Enabled: false
+
+RSpec/MultipleExpectations:
+  Enabled: false
+
+RSpec/MultipleMemoizedHelpers:
+  Enabled: false
+
+RSpec/VerifiedDoubles:
+  Exclude:
+    - spec/activerecord-duckdb_spec.rb
+
+RSpec/UnspecifiedException:
+  Exclude:
+    - spec/support/shared_examples.rb
+
+ThreadSafety/NewThread:
+  Exclude:
+    - spec/**/*
+
+ThreadSafety/ClassAndModuleAttributes:
+  Enabled: false

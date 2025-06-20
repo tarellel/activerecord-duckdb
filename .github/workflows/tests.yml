@@ -1,0 +1,25 @@
+name: Tests
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ruby: ["3.2.7", "3.3.8", "3.4.4", "head", "3.5.0-preview1"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby environment
+        uses: ./.github/actions/setup-ruby
+        with:
+          ruby_version: ${{ matrix.ruby }}
+
+      - name: Run tests
+        shell: sh
+        run: bundle exec rspec spec

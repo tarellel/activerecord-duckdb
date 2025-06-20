@@ -1,0 +1,40 @@
+name: Setup Ruby
+description: Setup Ruby environment and install dependencies
+
+inputs:
+  ruby_version:
+    description: The version of Ruby to install
+    default: "3.4.2"
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Install system dependencies
+      shell: sh
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends build-essential
+        sudo apt-get install -y --no-install-recommends cmake git wget
+
+    - name: Setup and Install DuckDB
+      uses: opt-nc/setup-duckdb-action@v1.0.13
+      with:
+        version: v1.3.1
+
+    - name: Install DuckDB development files
+      shell: sh
+      run: |
+        wget https://github.com/duckdb/duckdb/releases/download/v1.3.1/libduckdb-linux-amd64.zip
+        unzip libduckdb-linux-amd64.zip -d libduckdb
+        sudo mv libduckdb/duckdb.* /usr/local/include/
+        sudo mv libduckdb/libduckdb.so /usr/local/lib/
+        sudo ldconfig /usr/local/lib
+        rm -rf libduckdb libduckdb-linux-amd64.zip
+
+    # Setup ruby and bundle install
+    - name: Setup Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ inputs.ruby_version }}
+        bundler-cache: true # runs 'bundle install' and caches installed gems automatically

@@ -1,0 +1,25 @@
+name: Linters
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+jobs:
+  linters:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby environment
+        uses: ./.github/actions/setup-ruby
+
+      ########################################
+      # Run linters against code
+      ########################################
+      - name: Rubocop
+        run: bundle exec rubocop
+      - name: Fasterer
+        run: bundle exec fasterer
+      # - name: Sord/Yard
+      #   run: bundle exec sord defs.rbi

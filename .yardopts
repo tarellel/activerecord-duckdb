@@ -1,0 +1,2 @@
+--title 'ActiveRecord-DuckDB'
+--exclude /lib/activerecord/duckdb/version.rb
