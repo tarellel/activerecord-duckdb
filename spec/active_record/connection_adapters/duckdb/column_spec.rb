@@ -2,19 +2,35 @@
 
 require 'spec_helper'
 
+# Load version-specific column builder
+if ActiveRecord::VERSION::MAJOR > 8 ||
+   (ActiveRecord::VERSION::MAJOR == 8 && ActiveRecord::VERSION::MINOR >= 1)
+  require_relative '../../../support/column_builder_rails81'
+else
+  require_relative '../../../support/column_builder_rails80'
+end
+
 RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
+  # Include version-specific column builder
+  if ActiveRecord::VERSION::MAJOR > 8 ||
+     (ActiveRecord::VERSION::MAJOR == 8 && ActiveRecord::VERSION::MINOR >= 1)
+    include ColumnBuilderRails81
+  else
+    include ColumnBuilderRails80
+  end
+
   # Helper method to create fresh metadata for each test
-  def fresh_metadata
+  def fresh_metadata(sql_type: 'INTEGER', type: :integer)
     ActiveRecord::ConnectionAdapters::SqlTypeMetadata.new(
-      sql_type: 'INTEGER',
-      type: :integer
+      sql_type:,
+      type:
     )
   end
 
   describe 'initialization' do
     it 'creates a column with basic attributes' do
       metadata = fresh_metadata
-      column = described_class.new('test_column', 'default_value', metadata, true)
+      column = build_column('test_column', 'default_value', metadata, true)
 
       expect(column.name).to eq('test_column')
       expect(column.default).to eq('default_value')
@@ -24,7 +40,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
 
     it 'accepts DuckDB-specific options' do
       metadata = fresh_metadata
-      column = described_class.new(
+      column = build_column(
         'test_column',
         nil,
         metadata,
@@ -42,7 +58,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
 
     it 'handles nil options gracefully' do
       metadata = fresh_metadata
-      column = described_class.new('test_column', nil, metadata, true)
+      column = build_column('test_column', nil, metadata, true)
 
       expect(column.auto_increment?).to be false
       expect(column.rowid).to be_nil
@@ -50,70 +66,16 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
     end
   end
 
-  # describe '#virtual?' do
-  #   context 'when column has virtual keywords in extra' do
-  #     it 'returns true for VIRTUAL keyword', pending: 'Virtual columns not fully implemented' do
-  #       metadata = fresh_metadata
-  #       column = described_class.new('test', nil, metadata, true, extra: 'VIRTUAL')
-  #       expect(column.virtual?).to be true
-  #     end
-
-  #     it 'returns true for STORED keyword', pending: 'Virtual columns not fully implemented' do
-  #       metadata = fresh_metadata
-  #       column = described_class.new('test', nil, metadata, true, extra: 'STORED')
-  #       expect(column.virtual?).to be true
-  #     end
-
-  #     it 'returns true for GENERATED keyword', pending: 'Virtual columns not fully implemented' do
-  #       metadata = fresh_metadata
-  #       column = described_class.new('test', nil, metadata, true, extra: 'GENERATED ALWAYS AS (id * 2)')
-  #       expect(column.virtual?).to be true
-  #     end
-
-  #     it 'is case insensitive', pending: 'Virtual columns not fully implemented' do
-  #       metadata = fresh_metadata
-  #       column = described_class.new('test', nil, metadata, true, extra: 'virtual generated always')
-  #       expect(column.virtual?).to be true
-  #     end
-  #   end
-
-  #   context 'when column does not have virtual keywords' do
-  #     it 'returns false for nil extra' do
-  #       metadata = fresh_metadata
-  #       column = described_class.new('test', nil, metadata, true, extra: nil)
-  #       expect(column.virtual?).to be false
-  #     end
-
-  #     it 'returns false for regular constraints' do
-  #       metadata = fresh_metadata
-  #       column = described_class.new('test', nil, metadata, true, extra: 'NOT NULL DEFAULT 0')
-  #       expect(column.virtual?).to be false
-  #     end
-
-  #     it 'returns false for empty string' do
-  #       metadata = fresh_metadata
-  #       column = described_class.new('test', nil, metadata, true, extra: '')
-  #       expect(column.virtual?).to be false
-  #     end
-  #   end
-  # end
-
   describe '#has_default?' do
-    # it 'returns false for virtual columns even with default', pending: 'Virtual columns not fully implemented' do
-    #   metadata = fresh_metadata
-    #   column = described_class.new('test', 'some_default', metadata, true, extra: 'VIRTUAL')
-    #   expect(column.has_default?).to be false
-    # end
-
     it 'returns true for non-virtual columns with default' do
       metadata = fresh_metadata
-      column = described_class.new('test', 'default_value', metadata, true)
+      column = build_column('test', 'default_value', metadata, true)
       expect(column.has_default?).to be true
     end
 
     it 'returns false for non-virtual columns without default' do
       metadata = fresh_metadata
-      column = described_class.new('test', nil, metadata, true)
+      column = build_column('test', nil, metadata, true)
       expect(column.has_default?).to be false
     end
   end
@@ -121,67 +83,47 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
   describe '#auto_increment?' do
     it 'returns true when auto_increment is true' do
       metadata = fresh_metadata
-      column = described_class.new('id', nil, metadata, false, auto_increment: true)
+      column = build_column('id', nil, metadata, false, auto_increment: true)
       expect(column.auto_increment?).to be true
     end
-
-    #   it 'returns false when auto_increment is false', pending: 'RSpec environment kwargs issue' do
-    #     metadata = fresh_metadata
-    #     column = described_class.new('id', nil, metadata, false, auto_increment: false)
-    #     expect(column.auto_increment?).to be false
-    #   end
-
-    #   it 'returns false when auto_increment is not specified', pending: 'RSpec environment kwargs issue' do
-    #     metadata = fresh_metadata
-    #     column = described_class.new('id', nil, metadata, false)
-    #     expect(column.auto_increment?).to be false
-    #   end
   end
 
   describe '#auto_incremented_by_db?' do
     it 'returns true when auto_increment is true' do
       metadata = fresh_metadata
-      column = described_class.new('id', nil, metadata, false, auto_increment: true)
+      column = build_column('id', nil, metadata, false, auto_increment: true)
       expect(column.auto_incremented_by_db?).to be true
     end
 
     it 'returns true when rowid is true' do
       metadata = fresh_metadata
-      column = described_class.new('rowid', nil, metadata, false, rowid: true)
+      column = build_column('rowid', nil, metadata, false, rowid: true)
       expect(column.auto_incremented_by_db?).to be true
     end
 
     it 'returns true when both are true' do
       metadata = fresh_metadata
-      column = described_class.new('id', nil, metadata, false, auto_increment: true, rowid: true)
+      column = build_column('id', nil, metadata, false, auto_increment: true, rowid: true)
       expect(column.auto_incremented_by_db?).to be true
     end
 
     it 'returns false when neither is true' do
       metadata = fresh_metadata
-      column = described_class.new('name', nil, metadata, false)
+      column = build_column('name', nil, metadata, false)
       expect(column.auto_incremented_by_db?).to be false
     end
   end
 
   describe '#rowid' do
     it 'exposes rowid attribute when set' do
-      # Create completely fresh metadata and ensure no shared state
-      metadata = ActiveRecord::ConnectionAdapters::SqlTypeMetadata.new(
-        sql_type: 'INTEGER',
-        type: :integer
-      )
-      column = described_class.new('test_rowid_true', nil, metadata, true, rowid: true)
+      metadata = fresh_metadata
+      column = build_column('test_rowid_true', nil, metadata, true, rowid: true)
       expect(column.rowid).to be true
     end
 
     it 'defaults to nil when not specified' do
-      # Create completely fresh metadata with different name to ensure isolation
-      metadata = ActiveRecord::ConnectionAdapters::SqlTypeMetadata.new(
-        sql_type: 'INTEGER',
-        type: :integer
-      )
-      column = described_class.new('test_rowid_nil', nil, metadata, true)
+      metadata = fresh_metadata
+      column = build_column('test_rowid_nil', nil, metadata, true)
       expect(column.rowid).to be_nil
     end
   end
@@ -189,7 +131,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
   describe 'inheritance from ConnectionAdapters::Column' do
     let(:column) do
       metadata = fresh_metadata
-      described_class.new('test', 'default', metadata, true)
+      build_column('test', 'default', metadata, true)
     end
 
     it 'inherits from ConnectionAdapters::Column' do
@@ -210,11 +152,8 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
 
   describe 'real-world scenarios' do
     it 'handles sequence-based primary key columns' do
-      metadata = ActiveRecord::ConnectionAdapters::SqlTypeMetadata.new(
-        sql_type: 'BIGINT',
-        type: :bigint
-      )
-      column = described_class.new('id', nil, metadata, false, auto_increment: true)
+      metadata = fresh_metadata(sql_type: 'BIGINT', type: :bigint)
+      column = build_column('id', nil, metadata, false, auto_increment: true)
 
       expect(column.name).to eq('id')
       expect(column.type).to eq(:bigint)
@@ -225,11 +164,8 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
     end
 
     it 'handles UUID primary key columns' do
-      metadata = ActiveRecord::ConnectionAdapters::SqlTypeMetadata.new(
-        sql_type: 'UUID',
-        type: :uuid
-      )
-      column = described_class.new('id', nil, metadata, false)
+      metadata = fresh_metadata(sql_type: 'UUID', type: :uuid)
+      column = build_column('id', nil, metadata, false)
 
       expect(column.name).to eq('id')
       expect(column.type).to eq(:uuid)
@@ -239,11 +175,8 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
     end
 
     it 'handles basic columns without special features' do
-      metadata = ActiveRecord::ConnectionAdapters::SqlTypeMetadata.new(
-        sql_type: 'INTEGER',
-        type: :integer
-      )
-      column = described_class.new('total', nil, metadata, true)
+      metadata = fresh_metadata
+      column = build_column('total', nil, metadata, true)
 
       expect(column.virtual?).to be false
       expect(column.auto_increment?).to be false
@@ -252,11 +185,8 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
     end
 
     it 'handles regular columns with defaults' do
-      metadata = ActiveRecord::ConnectionAdapters::SqlTypeMetadata.new(
-        sql_type: 'VARCHAR',
-        type: :string
-      )
-      column = described_class.new('status', 'active', metadata, true)
+      metadata = fresh_metadata(sql_type: 'VARCHAR', type: :string)
+      column = build_column('status', 'active', metadata, true)
 
       expect(column.name).to eq('status')
       expect(column.type).to eq(:string)
@@ -270,7 +200,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
   describe 'edge cases' do
     it 'handles columns with regular constraints' do
       metadata = fresh_metadata
-      column = described_class.new('complex', nil, metadata, false)
+      column = build_column('complex', nil, metadata, false)
 
       expect(column.virtual?).to be false
       expect(column.auto_increment?).to be false
@@ -278,7 +208,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
 
     it 'does not match partial words in extra' do
       metadata = fresh_metadata
-      column = described_class.new(
+      column = build_column(
         'partial',
         nil,
         metadata,
@@ -292,14 +222,107 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
     it 'handles unknown keyword arguments gracefully' do
       metadata = fresh_metadata
       expect do
-        described_class.new('test', nil, metadata, true, unknown_param: 'value')
+        build_column('test', nil, metadata, true, unknown_param: 'value')
       end.not_to raise_error
     end
 
     it 'handles whitespace-only extra string' do
       metadata = fresh_metadata
-      column = described_class.new('whitespace', nil, metadata, true, extra: '   ')
+      column = build_column('whitespace', nil, metadata, true, extra: '   ')
       expect(column.virtual?).to be false
+    end
+  end
+
+  describe 'column reflection integration' do
+    # Tests that connection.columns() correctly reflects column types after table creation
+    # This verifies the full stack: create_table -> column_definitions -> parse_type_info -> Column
+
+    let(:config) { { adapter: 'duckdb', database: ':memory:' } }
+
+    before do
+      ActiveRecord::Base.establish_connection(config)
+      ActiveRecord::Base.connection.create_table(:column_reflection_test, id: false) do |t|
+        # Standard types
+        t.bigint :bigint_col
+        t.integer :integer_col
+        t.string :string_col
+        t.boolean :boolean_col
+        t.float :float_col
+        t.decimal :decimal_col, precision: 10, scale: 2
+        t.datetime :datetime_col
+        t.date :date_col
+        t.binary :binary_col
+
+        # DuckDB signed integers
+        t.tinyint :tinyint_col
+        t.smallint :smallint_col
+
+        # DuckDB unsigned integers
+        t.utinyint :utinyint_col
+        t.usmallint :usmallint_col
+        t.uinteger :uinteger_col
+        t.ubigint :ubigint_col
+
+        # Other DuckDB types
+        t.interval :interval_col
+        t.uuid :uuid_col
+      end
+    end
+
+    after do
+      ActiveRecord::Base.connection.drop_table(:column_reflection_test, if_exists: true)
+      ActiveRecord::Base.remove_connection
+    end
+
+    let(:connection) { ActiveRecord::Base.connection }
+    let(:columns) { connection.columns(:column_reflection_test) }
+    let(:columns_by_name) { columns.index_by(&:name) }
+
+    # Verify SQL types are preserved correctly after schema reflection
+    {
+      'bigint_col' => 'BIGINT',
+      'integer_col' => 'INTEGER',
+      'string_col' => 'VARCHAR',
+      'boolean_col' => 'BOOLEAN',
+      'tinyint_col' => 'TINYINT',
+      'smallint_col' => 'SMALLINT',
+      'utinyint_col' => 'UTINYINT',
+      'usmallint_col' => 'USMALLINT',
+      'uinteger_col' => 'UINTEGER',
+      'ubigint_col' => 'UBIGINT',
+      'interval_col' => 'INTERVAL',
+      'uuid_col' => 'UUID'
+    }.each do |col_name, expected_sql_type|
+      it "reflects #{expected_sql_type} type for #{col_name}" do
+        col = columns_by_name[col_name]
+        expect(col).not_to be_nil, "Column '#{col_name}' not found"
+        expect(col.sql_type.upcase).to eq(expected_sql_type)
+      end
+    end
+
+    it 'reflects DECIMAL with precision and scale' do
+      col = columns_by_name['decimal_col']
+      expect(col.sql_type.upcase).to match(/DECIMAL\(10,\s*2\)/i)
+    end
+
+    it 'reflects TIMESTAMP for datetime' do
+      col = columns_by_name['datetime_col']
+      expect(col.sql_type.upcase).to include('TIMESTAMP')
+    end
+
+    it 'reflects DATE type' do
+      col = columns_by_name['date_col']
+      expect(col.sql_type.upcase).to eq('DATE')
+    end
+
+    it 'reflects BLOB for binary' do
+      col = columns_by_name['binary_col']
+      expect(col.sql_type.upcase).to eq('BLOB')
+    end
+
+    it 'reflects REAL/FLOAT for float' do
+      col = columns_by_name['float_col']
+      expect(col.sql_type.upcase).to match(/REAL|FLOAT/)
     end
   end
 end

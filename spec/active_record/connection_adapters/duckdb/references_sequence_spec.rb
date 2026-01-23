@@ -288,5 +288,85 @@ RSpec.describe 'References Sequence Fix' do
       end
     end
   end
+
+  describe 'sequence operation SQL injection prevention' do
+    before { cleanup_tables }
+    after { cleanup_tables }
+
+    describe 'create_sequence' do
+      it 'safely handles sequence names with special characters' do
+        # Sequence names are quoted with quote_table_name
+        sequence_name = 'test_seq'
+        expect { adapter.create_sequence(sequence_name) }.not_to raise_error
+        adapter.drop_sequence(sequence_name)
+      end
+
+      it "safely escapes sequence names containing single quotes like O'Brien" do
+        # Single quotes in identifiers could break SQL if not properly escaped
+        # The sequence name is quoted via quote_table_name which uses double quotes
+        sequence_name = "user's_seq"
+        expect { adapter.create_sequence(sequence_name) }.not_to raise_error
+        adapter.drop_sequence(sequence_name)
+      end
+
+      it 'converts start_with to integer to prevent injection' do
+        # If start_with is a string that looks like SQL, it should be converted to integer
+        sequence_name = 'safe_start_seq'
+        # This should be safely converted to 0 or raise, not execute injection
+        expect { adapter.create_sequence(sequence_name, start_with: '10') }.not_to raise_error
+        adapter.drop_sequence(sequence_name)
+      end
+
+      it 'converts increment_by to integer to prevent injection' do
+        sequence_name = 'safe_increment_seq'
+        expect { adapter.create_sequence(sequence_name, increment_by: '2') }.not_to raise_error
+        adapter.drop_sequence(sequence_name)
+      end
+    end
+
+    describe 'reset_sequence!' do
+      it 'converts value to integer to prevent injection' do
+        # Note: DuckDB doesn't support ALTER SEQUENCE yet, so we just verify the SQL is built correctly
+        # by checking that the method doesn't raise a type error for the value parameter
+        adapter.create_table(:seq_reset_test) do |t|
+          t.string :name
+        end
+
+        sequence_name = 'seq_reset_test_id_seq'
+        # This should convert '100' to integer 100, not raise a SQL injection issue
+        # DuckDB will raise "ALTER SEQUENCE option not supported yet" which is expected
+        expect { adapter.reset_sequence!(sequence_name, '100') }.to raise_error(
+          ActiveRecord::StatementInvalid, /ALTER SEQUENCE option not supported/
+        )
+
+        adapter.drop_table(:seq_reset_test)
+      end
+    end
+
+    describe 'next_sequence_value' do
+      it 'properly quotes sequence name in expression' do
+        adapter.create_sequence('quoted_seq_test')
+
+        # The sequence name should be properly quoted
+        expr = adapter.next_sequence_value('quoted_seq_test')
+        expect(expr).to include("'quoted_seq_test'")
+
+        adapter.drop_sequence('quoted_seq_test')
+      end
+
+      it "escapes single quotes in sequence names like Robert'); DROP TABLE" do
+        # Test that malicious sequence names with SQL injection attempts are escaped
+        malicious_name = "seq'); DROP TABLE users; --"
+        adapter.create_sequence(malicious_name)
+
+        # The expression should have the single quote escaped
+        expr = adapter.next_sequence_value(malicious_name)
+        # Single quotes should be escaped as '' in SQL string literals
+        expect(expr).to include("''")
+
+        adapter.drop_sequence(malicious_name)
+      end
+    end
+  end
 end
 # rubocop:enable RSpec/DescribeClass

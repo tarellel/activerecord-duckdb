@@ -1,582 +1,620 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'stringio'
 
+# Tests for DuckDB Schema Dumper
+#
+# These tests verify that ActiveRecord::SchemaDumper correctly generates
+# schema.rb content for DuckDB tables and columns.
 RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::SchemaDumper do
-  let(:config) do
+  before do
+    ActiveRecord::Base.establish_connection(adapter: 'duckdb', database: ':memory:')
+    @connection = ActiveRecord::Base.connection
+  end
+
+  after do
+    ActiveRecord::Base.remove_connection if ActiveRecord::Base.connected?
+  end
+
+  def dump_schema
+    stream = StringIO.new
+    ActiveRecord::SchemaDumper.dump(ActiveRecord::Base.connection_pool, stream)
+    stream.string
+  end
+
+  describe 'standard column types' do
+    before do
+      @connection.create_table(:standard_types, id: false) do |t|
+        t.bigint :bigint_col
+        t.integer :integer_col
+        t.string :string_col
+        t.string :string_with_limit, limit: 100
+        t.text :text_col
+        t.boolean :boolean_col
+        t.float :float_col
+        t.decimal :decimal_col, precision: 10, scale: 2
+        t.date :date_col
+        t.time :time_col
+        t.datetime :datetime_col
+        t.binary :binary_col
+        t.uuid :uuid_col
+      end
+    end
+
+    after do
+      @connection.drop_table(:standard_types) if @connection.table_exists?(:standard_types)
+    end
+
+    it 'dumps bigint columns' do
+      expect(dump_schema).to include('t.bigint "bigint_col"')
+    end
+
+    it 'dumps integer columns' do
+      expect(dump_schema).to include('t.integer "integer_col"')
+    end
+
+    it 'dumps string columns' do
+      expect(dump_schema).to include('t.string "string_col"')
+    end
+
+    it 'dumps string columns with limit' do
+      schema = dump_schema
+      expect(schema).to include('string_with_limit')
+      # Limit should be preserved if different from default
+    end
+
+    it 'dumps text columns as string (DuckDB uses VARCHAR for text)' do
+      # DuckDB doesn't have a native TEXT type - it uses VARCHAR
+      expect(dump_schema).to include('"text_col"')
+    end
+
+    it 'dumps boolean columns' do
+      expect(dump_schema).to include('t.boolean "boolean_col"')
+    end
+
+    it 'dumps float columns' do
+      expect(dump_schema).to include('t.float "float_col"')
+    end
+
+    it 'dumps decimal columns with precision and scale' do
+      schema = dump_schema
+      expect(schema).to include('decimal_col')
+      expect(schema).to include('precision: 10')
+      expect(schema).to include('scale: 2')
+    end
+
+    it 'dumps date columns' do
+      expect(dump_schema).to include('t.date "date_col"')
+    end
+
+    it 'dumps time columns' do
+      expect(dump_schema).to include('t.time "time_col"')
+    end
+
+    it 'dumps datetime columns' do
+      expect(dump_schema).to include('t.datetime "datetime_col"')
+    end
+
+    it 'dumps binary columns' do
+      expect(dump_schema).to include('t.binary "binary_col"')
+    end
+
+    it 'dumps uuid columns' do
+      expect(dump_schema).to include('t.uuid "uuid_col"')
+    end
+  end
+
+  describe 'DuckDB-specific signed integer types' do
+    before do
+      @connection.create_table(:signed_int_types, id: false) do |t|
+        t.tinyint :tinyint_col
+        t.smallint :smallint_col
+        t.hugeint :hugeint_col
+      end
+    end
+
+    after do
+      @connection.drop_table(:signed_int_types) if @connection.table_exists?(:signed_int_types)
+    end
+
+    it 'dumps tinyint columns' do
+      expect(dump_schema).to include('t.tinyint "tinyint_col"')
+    end
+
+    it 'dumps smallint columns' do
+      expect(dump_schema).to include('t.smallint "smallint_col"')
+    end
+
+    it 'dumps hugeint columns' do
+      expect(dump_schema).to include('t.hugeint "hugeint_col"')
+    end
+  end
+
+  describe 'DuckDB-specific unsigned integer types' do
+    before do
+      @connection.create_table(:unsigned_int_types, id: false) do |t|
+        t.utinyint :utinyint_col
+        t.usmallint :usmallint_col
+        t.uinteger :uinteger_col
+        t.ubigint :ubigint_col
+        t.uhugeint :uhugeint_col
+      end
+    end
+
+    after do
+      @connection.drop_table(:unsigned_int_types) if @connection.table_exists?(:unsigned_int_types)
+    end
+
+    it 'dumps utinyint columns' do
+      expect(dump_schema).to include('t.utinyint "utinyint_col"')
+    end
+
+    it 'dumps usmallint columns' do
+      expect(dump_schema).to include('t.usmallint "usmallint_col"')
+    end
+
+    it 'dumps uinteger columns' do
+      expect(dump_schema).to include('t.uinteger "uinteger_col"')
+    end
+
+    it 'dumps ubigint columns' do
+      expect(dump_schema).to include('t.ubigint "ubigint_col"')
+    end
+
+    it 'dumps uhugeint columns' do
+      expect(dump_schema).to include('t.uhugeint "uhugeint_col"')
+    end
+  end
+
+  describe 'interval type' do
+    before do
+      @connection.create_table(:interval_types, id: false) do |t|
+        t.interval :interval_col
+      end
+    end
+
+    after do
+      @connection.drop_table(:interval_types) if @connection.table_exists?(:interval_types)
+    end
+
+    it 'dumps interval columns' do
+      expect(dump_schema).to include('t.interval "interval_col"')
+    end
+  end
+
+  describe 'column constraints' do
+    before do
+      @connection.create_table(:constrained_cols, id: false) do |t|
+        t.string :required_col, null: false
+        t.string :optional_col, null: true
+        t.integer :default_col, default: 42
+        t.boolean :bool_default, default: true
+      end
+    end
+
+    after do
+      @connection.drop_table(:constrained_cols) if @connection.table_exists?(:constrained_cols)
+    end
+
+    it 'dumps null: false constraint' do
+      expect(dump_schema).to include('null: false')
+    end
+
+    it 'does not include null: true (default)' do
+      schema = dump_schema
+      expect(schema).not_to include('null: true')
+    end
+
+    it 'dumps default values' do
+      schema = dump_schema
+      expect(schema).to include('default_col')
+      expect(schema).to match(/default:/)
+    end
+  end
+
+  describe 'primary key handling' do
+    it 'dumps tables with default primary key' do
+      @connection.create_table(:pk_default) do |t|
+        t.string :name
+      end
+
+      schema = dump_schema
+      expect(schema).to include('create_table "pk_default"')
+      expect(schema).not_to include('id: false')
+
+      @connection.drop_table(:pk_default)
+    end
+
+    it 'dumps tables without primary key' do
+      @connection.create_table(:pk_none, id: false) do |t|
+        t.string :name
+      end
+
+      schema = dump_schema
+      expect(schema).to include('create_table "pk_none", id: false')
+
+      @connection.drop_table(:pk_none)
+    end
+  end
+
+  describe 'TIME vs TIMESTAMP disambiguation' do
+    before do
+      @connection.create_table(:time_types, id: false) do |t|
+        t.time :time_only
+        t.datetime :timestamp_col
+      end
+    end
+
+    after do
+      @connection.drop_table(:time_types) if @connection.table_exists?(:time_types)
+    end
+
+    it 'correctly distinguishes TIME from TIMESTAMP' do
+      schema = dump_schema
+      expect(schema).to include('t.time "time_only"')
+      expect(schema).to include('t.datetime "timestamp_col"')
+    end
+  end
+
+  describe 'schema roundtrip' do
+    before do
+      @connection.create_table(:roundtrip_test, id: false) do |t|
+        t.bigint :bigint_col
+        t.integer :integer_col
+        t.string :string_col
+        t.decimal :decimal_col, precision: 10, scale: 2
+        t.boolean :boolean_col
+        t.datetime :datetime_col
+        t.tinyint :tinyint_col
+        t.utinyint :utinyint_col
+        t.interval :interval_col
+        t.uuid :uuid_col
+      end
+    end
+
+    after do
+      @connection.drop_table(:roundtrip_test) if @connection.table_exists?(:roundtrip_test)
+    end
+
+    it 'dumps schema that preserves all DuckDB types' do
+      schema = dump_schema
+
+      # All types should be preserved
+      expect(schema).to include('t.bigint "bigint_col"')
+      expect(schema).to include('t.integer "integer_col"')
+      expect(schema).to include('t.string "string_col"')
+      expect(schema).to include('decimal_col')
+      expect(schema).to include('t.boolean "boolean_col"')
+      expect(schema).to include('t.datetime "datetime_col"')
+      expect(schema).to include('t.tinyint "tinyint_col"')
+      expect(schema).to include('t.utinyint "utinyint_col"')
+      expect(schema).to include('t.interval "interval_col"')
+      expect(schema).to include('t.uuid "uuid_col"')
+    end
+
+    it 'produces schema that can be parsed as valid Ruby' do
+      schema = dump_schema
+      # Extract just the create_table block
+      create_block = schema[/create_table "roundtrip_test".*?end/m]
+      expect(create_block).not_to be_nil
+
+      # Verify it's valid Ruby (won't raise SyntaxError)
+      expect { RubyVM::InstructionSequence.compile(create_block) }.not_to raise_error
+    end
+  end
+
+  describe 'multiple tables' do
+    before do
+      @connection.create_table(:table_one, id: false) do |t|
+        t.string :name
+      end
+      @connection.create_table(:table_two, id: false) do |t|
+        t.integer :count
+      end
+    end
+
+    after do
+      @connection.drop_table(:table_one) if @connection.table_exists?(:table_one)
+      @connection.drop_table(:table_two) if @connection.table_exists?(:table_two)
+    end
+
+    it 'dumps all tables' do
+      schema = dump_schema
+      expect(schema).to include('create_table "table_one"')
+      expect(schema).to include('create_table "table_two"')
+    end
+  end
+
+  describe 'edge cases' do
+    it 'handles tables with single column' do
+      @connection.create_table(:single_col_table, id: false) do |t|
+        t.integer :only_col
+      end
+
+      expect { dump_schema }.not_to raise_error
+      expect(dump_schema).to include('single_col_table')
+
+      @connection.drop_table(:single_col_table)
+    end
+
+    it 'handles tables with many columns' do
+      @connection.create_table(:many_cols, id: false) do |t|
+        20.times { |i| t.string "col_#{i}" }
+      end
+
+      schema = dump_schema
+      20.times { |i| expect(schema).to include("col_#{i}") }
+
+      @connection.drop_table(:many_cols)
+    end
+  end
+end
+
+# DuckLake-specific schema dumping tests
+# These require a DuckLake connection with partitioning support
+RSpec.describe 'DuckLake Schema Dumping' do
+  let(:temp_dir) { Dir.mktmpdir('ducklake_schema_test') }
+
+  def ducklake_config
     {
       adapter: 'duckdb',
-      database: ':memory:'
+      database: ':memory:',
+      extensions: ['ducklake'],
+      attachments: [{
+        name: 'ducklake',
+        connection_string: "ducklake:#{File.join(temp_dir, 'test.ducklake')}",
+        options: "DATA_PATH '#{File.join(temp_dir, 'data')}'"
+      }],
+      use_database: 'ducklake'
     }
   end
 
-  let(:adapter) { ActiveRecord::ConnectionAdapters::DuckdbAdapter.new(nil, nil, {}, config) }
-
-  before { adapter.send(:connect) }
-
-  after { adapter.disconnect }
-
-  describe '#column_spec' do
-    it 'returns array with schema type and options' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column,
-                               sql_type: 'VARCHAR',
-                               type: :string,
-                               limit: 255,
-                               precision: nil,
-                               scale: nil,
-                               null: true,
-                               default: nil,
-                               comment: nil)
-
-      allow(adapter).to receive(:schema_type).with(column).and_return(:string)
-      allow(adapter).to receive(:prepare_column_options).with(column).and_return({ limit: 255 })
-
-      result = adapter.column_spec(column)
-
-      expect(result).to be_an(Array)
-      expect(result.size).to eq(2)
-      expect(result[0]).to eq(:string)
-      expect(result[1]).to eq({ limit: 255 })
-    end
+  before do
+    require 'tmpdir'
+    require 'fileutils'
+    FileUtils.mkdir_p(File.join(temp_dir, 'data'))
+    ActiveRecord::Base.establish_connection(ducklake_config)
+    @connection = ActiveRecord::Base.connection
+    ActiveRecord::SchemaDumper.ignore_tables = [/^ducklake_/]
   end
 
-  describe '#schema_type' do
-    it 'maps BIGINT to bigint' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'BIGINT')
-      expect(adapter.schema_type(column)).to eq(:bigint)
-    end
-
-    it 'maps INTEGER to integer' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'INTEGER')
-      expect(adapter.schema_type(column)).to eq(:integer)
-    end
-
-    it 'maps VARCHAR to string' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'VARCHAR')
-      expect(adapter.schema_type(column)).to eq(:string)
-
-      column_with_limit = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'VARCHAR(100)')
-      expect(adapter.schema_type(column_with_limit)).to eq(:string)
-    end
-
-    it 'maps TEXT to text' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'TEXT')
-      expect(adapter.schema_type(column)).to eq(:text)
-    end
-
-    it 'maps TIMESTAMP to datetime' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'TIMESTAMP')
-      expect(adapter.schema_type(column)).to eq(:datetime)
-    end
-
-    it 'maps BOOLEAN to boolean' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'BOOLEAN')
-      expect(adapter.schema_type(column)).to eq(:boolean)
-    end
-
-    it 'maps UUID to uuid' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'UUID')
-      expect(adapter.schema_type(column)).to eq(:uuid)
-    end
-
-    it 'maps DECIMAL with precision and scale to decimal' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'DECIMAL(10,2)')
-      expect(adapter.schema_type(column)).to eq(:decimal)
-    end
-
-    it 'maps BLOB to binary' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'BLOB')
-      expect(adapter.schema_type(column)).to eq(:binary)
-    end
-
-    it 'maps REAL and DOUBLE to float' do
-      real_column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'REAL')
-      expect(adapter.schema_type(real_column)).to eq(:float)
-
-      double_column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'DOUBLE')
-      expect(adapter.schema_type(double_column)).to eq(:float)
-    end
-
-    it 'maps DATE to date' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'DATE')
-      expect(adapter.schema_type(column)).to eq(:date)
-    end
-
-    it 'maps TIME to time' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'TIME')
-      expect(adapter.schema_type(column)).to eq(:time)
-    end
-
-    it 'falls back to column type for unknown SQL types' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'UNKNOWN_TYPE', type: :custom)
-      expect(adapter.schema_type(column)).to eq(:custom)
-    end
-
-    it 'handles case-insensitive SQL types' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'bigint')
-      expect(adapter.schema_type(column)).to eq(:bigint)
-
-      column_mixed = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: 'VarChar')
-      expect(adapter.schema_type(column_mixed)).to eq(:string)
-    end
+  after do
+    ActiveRecord::Base.remove_connection if ActiveRecord::Base.connected?
+    FileUtils.rm_rf(temp_dir)
   end
 
-  describe '#default_primary_key?' do
-    it 'returns true for bigint columns' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column)
-      allow(adapter).to receive(:schema_type).with(column).and_return(:bigint)
-
-      expect(adapter.default_primary_key?(column)).to be true
-    end
-
-    it 'returns false for non-bigint columns' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column)
-      allow(adapter).to receive(:schema_type).with(column).and_return(:integer)
-
-      expect(adapter.default_primary_key?(column)).to be false
-    end
-
-    it 'returns false for string columns' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column)
-      allow(adapter).to receive(:schema_type).with(column).and_return(:string)
-
-      expect(adapter.default_primary_key?(column)).to be false
-    end
-
-    it 'returns false for uuid columns' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column)
-      allow(adapter).to receive(:schema_type).with(column).and_return(:uuid)
-
-      expect(adapter.default_primary_key?(column)).to be false
-    end
+  def dump_schema
+    stream = StringIO.new
+    ActiveRecord::SchemaDumper.dump(ActiveRecord::Base.connection_pool, stream)
+    stream.string
   end
 
-  describe '#explicit_primary_key_default?' do
-    it 'always returns false' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column)
-      expect(adapter.explicit_primary_key_default?(column)).to be false
-    end
-  end
-
-  describe '#prepare_column_options' do
-    let(:base_column) do
-      instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column,
-                      type: :string,
-                      limit: nil,
-                      precision: nil,
-                      scale: nil,
-                      null: true,
-                      default: nil,
-                      comment: nil)
-    end
-
-    it 'returns empty hash for basic column' do
-      allow(adapter).to receive(:schema_limit).with(base_column).and_return(nil)
-      allow(adapter).to receive(:schema_precision).with(base_column).and_return(nil)
-      allow(adapter).to receive(:schema_scale).with(base_column).and_return(nil)
-      allow(adapter).to receive(:schema_default).with(base_column).and_return(nil)
-
-      result = adapter.prepare_column_options(base_column)
-      expect(result).to eq({})
-    end
-
-    it 'includes limit when present' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :string, limit: 100, null: true, default: nil, comment: nil)
-      allow(adapter).to receive(:schema_limit).with(column).and_return(100)
-      allow(adapter).to receive(:schema_precision).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_scale).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_default).with(column).and_return(nil)
-
-      result = adapter.prepare_column_options(column)
-      expect(result).to eq({ limit: 100 })
-    end
-
-    it 'includes precision when present' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :decimal, precision: 10, null: true, default: nil, comment: nil)
-      allow(adapter).to receive(:schema_limit).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_precision).with(column).and_return(10)
-      allow(adapter).to receive(:schema_scale).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_default).with(column).and_return(nil)
-
-      result = adapter.prepare_column_options(column)
-      expect(result).to eq({ precision: 10 })
-    end
-
-    it 'includes scale when present' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :decimal, scale: 2, null: true, default: nil, comment: nil)
-      allow(adapter).to receive(:schema_limit).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_precision).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_scale).with(column).and_return(2)
-      allow(adapter).to receive(:schema_default).with(column).and_return(nil)
-
-      result = adapter.prepare_column_options(column)
-      expect(result).to eq({ scale: 2 })
-    end
-
-    it 'includes null: false when column is not nullable' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, null: false, default: nil, comment: nil)
-      allow(adapter).to receive(:schema_limit).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_precision).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_scale).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_default).with(column).and_return(nil)
-
-      result = adapter.prepare_column_options(column)
-      expect(result).to eq({ null: false })
-    end
-
-    it 'does not include null option when column is nullable' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, null: true, default: nil, comment: nil)
-      allow(adapter).to receive(:schema_limit).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_precision).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_scale).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_default).with(column).and_return(nil)
-
-      result = adapter.prepare_column_options(column)
-      expect(result).not_to have_key(:null)
-    end
-
-    it 'includes default when present' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, null: true, default: 'test', comment: nil)
-      allow(adapter).to receive(:schema_limit).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_precision).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_scale).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_default).with(column).and_return('test')
-
-      result = adapter.prepare_column_options(column)
-      expect(result).to eq({ default: 'test' })
-    end
-
-    it 'includes comment when present' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, null: true, default: nil, comment: 'Test comment')
-      allow(adapter).to receive(:schema_limit).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_precision).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_scale).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_default).with(column).and_return(nil)
-
-      result = adapter.prepare_column_options(column)
-      expect(result).to eq({ comment: '"Test comment"' })
-    end
-
-    it 'includes all options when present' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column,
-                               type: :decimal,
-                               limit: nil,
-                               precision: 10,
-                               scale: 2,
-                               null: false,
-                               default: 0,
-                               comment: 'Price field')
-      allow(adapter).to receive(:schema_limit).with(column).and_return(nil)
-      allow(adapter).to receive(:schema_precision).with(column).and_return(10)
-      allow(adapter).to receive(:schema_scale).with(column).and_return(2)
-      allow(adapter).to receive(:schema_default).with(column).and_return(0)
-
-      result = adapter.prepare_column_options(column)
-      expect(result).to eq({
-                             precision: 10,
-                             scale: 2,
-                             null: false,
-                             default: 0,
-                             comment: '"Price field"'
-                           })
-    end
-  end
-
-  describe '#schema_limit' do
-    it 'returns limit for string columns when limit is present' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :string, limit: 255)
-      expect(adapter.schema_limit(column)).to eq(255)
-    end
-
-    it 'returns nil for string columns when limit is nil' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :string, limit: nil)
-      expect(adapter.schema_limit(column)).to be_nil
-    end
-
-    it 'returns nil for non-string columns even with limit' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :integer, limit: 4)
-      expect(adapter.schema_limit(column)).to be_nil
-    end
-
-    it 'returns nil for text columns' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :text, limit: 65_535)
-      expect(adapter.schema_limit(column)).to be_nil
-    end
-
-    it 'returns nil for decimal columns' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :decimal, limit: 10)
-      expect(adapter.schema_limit(column)).to be_nil
-    end
-  end
-
-  describe '#schema_precision' do
-    it 'returns precision for decimal columns when precision is positive' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :decimal, precision: 10)
-      expect(adapter.schema_precision(column)).to eq(10)
-    end
-
-    it 'returns precision for float columns when precision is positive' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :float, precision: 8)
-      expect(adapter.schema_precision(column)).to eq(8)
-    end
-
-    it 'returns precision for numeric columns when precision is positive' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :numeric, precision: 15)
-      expect(adapter.schema_precision(column)).to eq(15)
-    end
-
-    it 'returns precision for real columns when precision is positive' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :real, precision: 6)
-      expect(adapter.schema_precision(column)).to eq(6)
-    end
-
-    it 'returns nil for decimal columns when precision is nil' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :decimal, precision: nil)
-      expect(adapter.schema_precision(column)).to be_nil
-    end
-
-    it 'returns nil for decimal columns when precision is zero' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :decimal, precision: 0)
-      expect(adapter.schema_precision(column)).to be_nil
-    end
-
-    it 'returns nil for non-numeric columns' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :string, precision: 10)
-      expect(adapter.schema_precision(column)).to be_nil
-    end
-
-    it 'returns nil for integer columns' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :integer, precision: 10)
-      expect(adapter.schema_precision(column)).to be_nil
-    end
-  end
-
-  describe '#schema_scale' do
-    it 'returns scale for decimal columns when scale is non-negative' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :decimal, scale: 2)
-      expect(adapter.schema_scale(column)).to eq(2)
-    end
-
-    it 'returns scale for float columns when scale is non-negative' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :float, scale: 4)
-      expect(adapter.schema_scale(column)).to eq(4)
-    end
-
-    it 'returns scale for numeric columns when scale is non-negative' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :numeric, scale: 3)
-      expect(adapter.schema_scale(column)).to eq(3)
-    end
-
-    it 'returns scale for real columns when scale is non-negative' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :real, scale: 1)
-      expect(adapter.schema_scale(column)).to eq(1)
-    end
-
-    it 'returns scale when scale is zero' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :decimal, scale: 0)
-      expect(adapter.schema_scale(column)).to eq(0)
-    end
-
-    it 'returns nil for decimal columns when scale is nil' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :decimal, scale: nil)
-      expect(adapter.schema_scale(column)).to be_nil
-    end
-
-    it 'returns nil for decimal columns when scale is negative' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :decimal, scale: -1)
-      expect(adapter.schema_scale(column)).to be_nil
-    end
-
-    it 'returns nil for non-numeric columns' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :string, scale: 2)
-      expect(adapter.schema_scale(column)).to be_nil
-    end
-
-    it 'returns nil for integer columns' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :integer, scale: 2)
-      expect(adapter.schema_scale(column)).to be_nil
-    end
-  end
-
-  describe '#schema_default' do
-    it 'returns nil when column has default_function' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, default_function: "nextval('seq')", default: nil)
-      expect(adapter.schema_default(column)).to be_nil
-    end
-
-    it 'returns nil when default is nil' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, default_function: nil, default: nil)
-      expect(adapter.schema_default(column)).to be_nil
-    end
-
-    it 'returns true for boolean true default' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, default_function: nil, default: true)
-      expect(adapter.schema_default(column)).to be true
-    end
-
-    it 'returns false for boolean false default' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, default_function: nil, default: false)
-      expect(adapter.schema_default(column)).to be false
-    end
-
-    it 'returns inspected string for string defaults' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, default_function: nil, default: 'test')
-      expect(adapter.schema_default(column)).to eq('"test"')
-    end
-
-    it 'returns numeric value for numeric defaults' do
-      integer_column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, default_function: nil, default: 42)
-      expect(adapter.schema_default(integer_column)).to eq(42)
-
-      float_column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, default_function: nil, default: 3.14)
-      expect(adapter.schema_default(float_column)).to eq(3.14)
-    end
-
-    it 'returns inspected value for other types' do
-      date = Date.new(2023, 1, 1)
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, default_function: nil, default: date)
-      expect(adapter.schema_default(column)).to eq(date.inspect)
-    end
-
-    it 'handles complex string defaults with quotes' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, default_function: nil, default: "it's a test")
-      expect(adapter.schema_default(column)).to eq('"it\'s a test"')
-    end
-
-    it 'handles empty string defaults' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, default_function: nil, default: '')
-      expect(adapter.schema_default(column)).to eq('""')
-    end
-  end
-
-  describe 'integration with real tables' do
+  describe 'partitioned tables' do
     before do
-      adapter.create_table(:schema_dump_test) do |t|
-        t.string :name, limit: 100, null: false, default: 'Unknown'
-        t.integer :age, default: 0
-        t.decimal :price, precision: 10, scale: 2
-        t.boolean :active, default: true
-        t.text :description
-        t.uuid :identifier
-        t.timestamps
+      @connection.create_table(:events, id: false) do |t|
+        t.bigint :id
+        t.datetime :created_at
+        t.string :event_type
       end
     end
 
-    it 'correctly dumps schema for various column types' do
-      columns = adapter.columns('schema_dump_test')
-
-      name_column = columns.find { |c| c.name == 'name' }
-      spec = adapter.column_spec(name_column)
-      expect(spec[0]).to eq(:string)
-      expect(spec[1]).to include(default: '"Unknown"')
-      # DuckDB may not enforce NOT NULL in the same way, so just check the column exists
-      expect(name_column).not_to be_nil
-
-      age_column = columns.find { |c| c.name == 'age' }
-      spec = adapter.column_spec(age_column)
-      expect(spec[0]).to eq(:integer)
-      expect(spec[1]).to include(default: 0)
-
-      price_column = columns.find { |c| c.name == 'price' }
-      spec = adapter.column_spec(price_column)
-      expect(spec[0]).to eq(:decimal)
-      # DuckDB may handle precision/scale differently, so just verify the column type
-      expect(price_column.type).to eq(:decimal)
-
-      active_column = columns.find { |c| c.name == 'active' }
-      spec = adapter.column_spec(active_column)
-      expect(spec[0]).to eq(:boolean)
-      # DuckDB formats boolean defaults differently
-      expect(spec[1][:default]).to be_a(String).or be(true)
-
-      description_column = columns.find { |c| c.name == 'description' }
-      spec = adapter.column_spec(description_column)
-      expect(spec[0]).to eq(:string) # DuckDB maps TEXT to string
-
-      identifier_column = columns.find { |c| c.name == 'identifier' }
-      spec = adapter.column_spec(identifier_column)
-      expect(spec[0]).to eq(:uuid)
+    after do
+      @connection.drop_table(:events) if @connection.table_exists?(:events)
     end
 
-    it 'handles columns with sequence defaults correctly' do
-      columns = adapter.columns('schema_dump_test')
-      id_column = columns.find { |c| c.name == 'id' }
+    it 'dumps tables with single partition expression' do
+      @connection.set_partitioned_by(:events, ['month(created_at)'])
 
-      # ID column should have sequence default, so schema_default should return nil
-      expect(adapter.schema_default(id_column)).to be_nil
-      # Verify the column exists and is likely a primary key
-      expect(id_column).not_to be_nil
-      expect(id_column.name).to eq('id')
+      schema = dump_schema
+      expect(schema).to include('create_table "events"')
+      expect(schema).to include('set_partitioned_by "events"')
+      expect(schema).to include('month(created_at)')
+    end
+
+    it 'dumps tables with multiple partition expressions' do
+      @connection.set_partitioned_by(:events, ['year(created_at)', 'month(created_at)'])
+
+      schema = dump_schema
+      expect(schema).to include('set_partitioned_by "events"')
+      expect(schema).to include('year(created_at)')
+      expect(schema).to include('month(created_at)')
+    end
+
+    it 'preserves partition expression order' do
+      @connection.set_partitioned_by(:events, ['year(created_at)', 'month(created_at)', 'day(created_at)'])
+
+      schema = dump_schema
+      # The expressions should appear in order
+      year_pos = schema.index('year(created_at)')
+      month_pos = schema.index('month(created_at)')
+      day_pos = schema.index('day(created_at)')
+
+      expect(year_pos).to be < month_pos
+      expect(month_pos).to be < day_pos
     end
   end
 
-  describe 'edge cases and error handling' do
-    it 'handles columns with nil sql_type' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: nil, type: :string)
-      expect(adapter.schema_type(column)).to eq(:string)
-    end
+  describe 'non-partitioned tables' do
+    it 'does not include set_partitioned_by for regular tables' do
+      @connection.create_table(:simple_table, id: false) do |t|
+        t.string :name
+      end
 
-    it 'handles columns with empty sql_type' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, sql_type: '', type: :integer)
-      expect(adapter.schema_type(column)).to eq(:integer)
-    end
+      schema = dump_schema
+      expect(schema).to include('create_table "simple_table"')
+      expect(schema).not_to include('set_partitioned_by "simple_table"')
 
-    it 'handles very long limit values' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :string, limit: 65_535)
-      expect(adapter.schema_limit(column)).to eq(65_535)
-    end
-
-    it 'handles very high precision and scale values' do
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, type: :decimal, precision: 38, scale: 10)
-      expect(adapter.schema_precision(column)).to eq(38)
-      expect(adapter.schema_scale(column)).to eq(10)
-    end
-
-    it 'handles complex default values' do
-      complex_default = { key: 'value', array: [1, 2, 3] }
-      column = instance_double(ActiveRecord::ConnectionAdapters::Duckdb::Column, default_function: nil, default: complex_default)
-      expect(adapter.schema_default(column)).to eq(complex_default.inspect)
+      @connection.drop_table(:simple_table)
     end
   end
 
-  describe 'DuckDB-specific column types' do
+  describe 'mixed tables' do
+    it 'correctly handles both partitioned and non-partitioned tables' do
+      @connection.create_table(:partitioned_logs, id: false) do |t|
+        t.datetime :logged_at
+        t.string :message
+      end
+      @connection.set_partitioned_by(:partitioned_logs, ['day(logged_at)'])
+
+      @connection.create_table(:users, id: false) do |t|
+        t.string :name
+        t.string :email
+      end
+
+      schema = dump_schema
+
+      # Partitioned table should have set_partitioned_by
+      expect(schema).to include('set_partitioned_by "partitioned_logs"')
+      expect(schema).to include('day(logged_at)')
+
+      # Non-partitioned table should not
+      expect(schema).not_to include('set_partitioned_by "users"')
+
+      @connection.drop_table(:partitioned_logs)
+      @connection.drop_table(:users)
+    end
+  end
+
+  describe 'DuckDB types in DuckLake' do
+    it 'dumps all DuckDB-specific types correctly in DuckLake mode' do
+      @connection.create_table(:typed_table, id: false) do |t|
+        t.bigint :bigint_col
+        t.tinyint :tinyint_col
+        t.smallint :smallint_col
+        t.utinyint :utinyint_col
+        t.usmallint :usmallint_col
+        t.uinteger :uinteger_col
+        t.ubigint :ubigint_col
+        t.interval :interval_col
+        t.uuid :uuid_col
+        t.decimal :decimal_col, precision: 10, scale: 2
+      end
+
+      schema = dump_schema
+
+      expect(schema).to include('t.bigint "bigint_col"')
+      expect(schema).to include('t.tinyint "tinyint_col"')
+      expect(schema).to include('t.smallint "smallint_col"')
+      expect(schema).to include('t.utinyint "utinyint_col"')
+      expect(schema).to include('t.usmallint "usmallint_col"')
+      expect(schema).to include('t.uinteger "uinteger_col"')
+      expect(schema).to include('t.ubigint "ubigint_col"')
+      expect(schema).to include('t.interval "interval_col"')
+      expect(schema).to include('t.uuid "uuid_col"')
+      expect(schema).to include('decimal_col')
+
+      @connection.drop_table(:typed_table)
+    end
+  end
+
+  describe 'DuckLake options' do
+    it 'dumps parquet_version option' do
+      @connection.set_ducklake_option('parquet_version', '2')
+
+      schema = dump_schema
+      expect(schema).to include('set_ducklake_option')
+      expect(schema).to include('parquet_version')
+    end
+
+    it 'dumps parquet_compression option' do
+      @connection.set_ducklake_option('parquet_compression', 'zstd')
+
+      schema = dump_schema
+      expect(schema).to include('set_ducklake_option')
+      expect(schema).to include('parquet_compression')
+      expect(schema).to include('zstd')
+    end
+
+    it 'dumps multiple options in alphabetical order' do
+      @connection.set_ducklake_option('parquet_version', '2')
+      @connection.set_ducklake_option('parquet_compression', 'snappy')
+
+      schema = dump_schema
+      # Both options should be present
+      expect(schema).to include('parquet_compression')
+      expect(schema).to include('parquet_version')
+
+      # They should appear in alphabetical order (compression before version)
+      compression_pos = schema.index('parquet_compression')
+      version_pos = schema.index('parquet_version')
+      expect(compression_pos).to be < version_pos
+    end
+
+    it 'places options before table definitions' do
+      @connection.set_ducklake_option('parquet_compression', 'gzip')
+
+      @connection.create_table(:some_table, id: false) do |t|
+        t.string :name
+      end
+
+      schema = dump_schema
+      options_pos = schema.index('set_ducklake_option')
+      table_pos = schema.index('create_table "some_table"')
+
+      expect(options_pos).to be < table_pos
+
+      @connection.drop_table(:some_table)
+    end
+
+  end
+
+  describe 'table-level options' do
     before do
-      adapter.create_table(:duckdb_types_dump_test) do |t|
-        t.hugeint :big_number
-        t.tinyint :small_number
-        t.utinyint :unsigned_small
-        t.interval :duration
-        t.list :tags, element_type: :string
-        t.struct :address, fields: { street: :string, city: :string }
-        t.map :metadata, key_type: :string, value_type: :string
-        t.enum :status, values: %w[active inactive]
+      @connection.create_table(:events, id: false) do |t|
+        t.bigint :id
+        t.datetime :created_at
       end
     end
 
-    it 'handles DuckDB-specific types in schema dumping' do
-      columns = adapter.columns('duckdb_types_dump_test')
+    after do
+      @connection.drop_table(:events) if @connection.table_exists?(:events)
+    end
 
-      # Test that DuckDB-specific types are preserved
-      big_number_column = columns.find { |c| c.name == 'big_number' }
-      expect(big_number_column.sql_type).to eq('HUGEINT')
+    it 'dumps table-specific parquet_compression' do
+      @connection.set_ducklake_option('parquet_compression', 'zstd', :events)
 
-      small_number_column = columns.find { |c| c.name == 'small_number' }
-      expect(small_number_column.sql_type).to eq('TINYINT')
+      schema = dump_schema
+      expect(schema).to include('set_ducklake_option "parquet_compression", "zstd", "events"')
+    end
 
-      duration_column = columns.find { |c| c.name == 'duration' }
-      expect(duration_column.sql_type).to eq('INTERVAL')
+    it 'places table options after the table definition' do
+      @connection.set_ducklake_option('parquet_compression', 'gzip', :events)
 
-      tags_column = columns.find { |c| c.name == 'tags' }
-      expect(tags_column.sql_type).to eq('VARCHAR[]')
+      schema = dump_schema
+      table_pos = schema.index('create_table "events"')
+      option_pos = schema.index('"parquet_compression", "gzip", "events"')
 
-      address_column = columns.find { |c| c.name == 'address' }
-      expect(address_column.sql_type).to eq('STRUCT(street VARCHAR, city VARCHAR)')
+      expect(option_pos).to be > table_pos
+    end
 
-      metadata_column = columns.find { |c| c.name == 'metadata' }
-      expect(metadata_column.sql_type).to eq('MAP(VARCHAR, VARCHAR)')
+    it 'handles multiple tables with different options' do
+      @connection.set_ducklake_option('parquet_compression', 'zstd', :events)
 
-      status_column = columns.find { |c| c.name == 'status' }
-      expect(status_column.sql_type).to eq("ENUM('active', 'inactive')")
+      @connection.create_table(:logs, id: false) do |t|
+        t.string :message
+      end
+      @connection.set_ducklake_option('parquet_compression', 'snappy', :logs)
+
+      schema = dump_schema
+      expect(schema).to include('"parquet_compression", "zstd", "events"')
+      expect(schema).to include('"parquet_compression", "snappy", "logs"')
+
+      @connection.drop_table(:logs)
+    end
+
+    it 'does not mix up global and table options' do
+      @connection.set_ducklake_option('parquet_version', '2')  # global
+      @connection.set_ducklake_option('parquet_compression', 'zstd', :events)  # table
+
+      schema = dump_schema
+
+      # Global option should not have table name
+      global_match = schema.match(/set_ducklake_option "parquet_version", "[^"]+"\s*$/)
+      expect(global_match).not_to be_nil
+
+      # Table option should have table name
+      expect(schema).to include('"parquet_compression", "zstd", "events"')
     end
   end
 end

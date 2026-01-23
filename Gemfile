@@ -9,6 +9,8 @@ gem 'irb'
 gem 'rake', '~> 13.0'
 
 group :development do
+  gem 'appraisal'
+  gem 'debug'
   gem 'fasterer'
   gem 'rubocop', '~> 1.76', require: false
   gem 'rubocop-performance', '~> 1.25', require: false

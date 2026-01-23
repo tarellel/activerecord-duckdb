@@ -458,3 +458,21 @@ RSpec.shared_context 'with concurrent testing setup' do
     ActiveRecord::Base.connection.drop_table(concurrent_table, if_exists: true)
   end
 end
+
+# Shared context for timezone testing with Europe/Berlin timezone
+# Rails stores timestamps in UTC internally, but this context sets
+# the application timezone to Europe/Berlin for testing timezone handling
+RSpec.shared_context 'with Europe/Berlin timezone' do
+  around do |example|
+    original_zone = Time.zone
+    original_default_timezone = ActiveRecord.default_timezone
+
+    Time.zone = 'Europe/Berlin'
+    ActiveRecord.default_timezone = :utc
+
+    example.run
+  ensure
+    Time.zone = original_zone
+    ActiveRecord.default_timezone = original_default_timezone
+  end
+end

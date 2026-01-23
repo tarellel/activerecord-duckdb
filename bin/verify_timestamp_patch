@@ -1,0 +1,267 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Script to verify the timestamp monkey patch works across duckdb gem versions.
+#
+# Usage:
+#   bin/verify_timestamp_patch           # Test current installed version
+#   bin/verify_timestamp_patch --all     # Test all versions in range (requires network)
+#   bin/verify_timestamp_patch 1.2.0.0   # Test a specific version
+#
+# This script:
+# 1. Verifies all expected methods exist with correct arities
+# 2. Applies the monkey patch
+# 3. Tests actual timestamp conversions in both :utc and :local modes
+# 4. Tests database roundtrip
+#
+# When upgrading duckdb, run with --all to verify the full range.
+
+# Version range - must match timestamp_monkey_patch.rb
+TESTED_VERSION_MIN = '1.0.0.0'
+TESTED_VERSION_MAX = '1.4.3.0'
+
+# All 1.x versions to test when --all is passed
+# Source: https://rubygems.org/gems/duckdb/versions
+ALL_VERSIONS = %w[
+  1.0.0.0
+  1.0.0.1
+  1.0.0.2
+  1.1.0.0
+  1.1.0.1
+  1.1.1.0
+  1.1.2.0
+  1.1.2.1
+  1.1.3.0
+  1.1.3.1
+  1.2.0.0
+  1.2.1.0
+  1.2.2.0
+  1.3.0.0
+  1.3.1.0
+  1.4.1.0
+  1.4.1.1
+  1.4.2.0
+  1.4.3.0
+].freeze
+
+EXPECTED_METHODS = {
+  '_to_time' => { arity: 7 },
+  '_to_time_from_duckdb_time' => { arity: 4 },
+  '_to_time_from_duckdb_timestamp_s' => { arity: 1 },
+  '_to_time_from_duckdb_timestamp_ms' => { arity: 1 },
+  '_to_time_from_duckdb_timestamp_ns' => { arity: 1 }
+}.freeze
+
+def test_version(version = nil)
+  # Build a test script that will be run in isolation
+  test_script = <<~RUBY
+    require 'bundler/setup'
+    require 'active_record'
+    require 'duckdb'
+    require 'active_record/connection_adapters/duckdb/timestamp_monkey_patch'
+
+    errors = []
+
+    # Test method signatures
+    expected = {
+      '_to_time' => 7,
+      '_to_time_from_duckdb_time' => 4,
+      '_to_time_from_duckdb_timestamp_s' => 1,
+      '_to_time_from_duckdb_timestamp_ms' => 1,
+      '_to_time_from_duckdb_timestamp_ns' => 1
+    }
+
+    expected.each do |method_name, arity|
+      unless DuckDB::Converter.respond_to?(method_name)
+        errors << "Method \#{method_name} not found"
+        next
+      end
+      actual = DuckDB::Converter.method(method_name).arity
+      if actual != arity
+        errors << "Method \#{method_name} has arity \#{actual}, expected \#{arity}"
+      end
+    end
+
+    # Test UTC mode
+    ActiveRecord.default_timezone = :utc
+
+    result = DuckDB::Converter._to_time(2025, 1, 15, 12, 0, 0, 0)
+    errors << "_to_time should return UTC" unless result.utc?
+    errors << "_to_time hour should be 12" unless result.hour == 12
+
+    result = DuckDB::Converter._to_time_from_duckdb_time(14, 30, 0, 0)
+    errors << "_to_time_from_duckdb_time should return UTC" unless result.utc?
+
+    result = DuckDB::Converter._to_time_from_duckdb_timestamp_s(1705320000)
+    errors << "_to_time_from_duckdb_timestamp_s should return UTC" unless result.utc?
+
+    result = DuckDB::Converter._to_time_from_duckdb_timestamp_ms(1705320000000)
+    errors << "_to_time_from_duckdb_timestamp_ms should return UTC" unless result.utc?
+
+    result = DuckDB::Converter._to_time_from_duckdb_timestamp_ns(1705320000000000000)
+    errors << "_to_time_from_duckdb_timestamp_ns should return UTC" unless result.utc?
+
+    # Test local mode
+    ActiveRecord.default_timezone = :local
+
+    result = DuckDB::Converter._to_time(2025, 1, 15, 12, 0, 0, 0)
+    errors << "_to_time should return local time in :local mode" if result.utc?
+    errors << "_to_time hour should be 12 in :local mode" unless result.hour == 12
+
+    # Test database roundtrip
+    ActiveRecord.default_timezone = :utc
+    db = DuckDB::Database.open
+    conn = db.connect
+    conn.execute('CREATE TABLE test_ts (id INTEGER, ts TIMESTAMP)')
+    conn.execute("INSERT INTO test_ts VALUES (1, '2025-01-15 12:00:00')")
+    result = conn.execute('SELECT ts FROM test_ts WHERE id = 1')
+    ts = result.first.first
+
+    errors << "Database: expected Time, got \#{ts.class}" unless ts.is_a?(Time)
+    errors << "Database: expected UTC, got \#{ts.zone}" unless ts.utc?
+    errors << "Database: expected hour 12, got \#{ts.hour}" unless ts.hour == 12
+
+    if errors.empty?
+      puts "PASS"
+      exit 0
+    else
+      errors.each { |e| puts "FAIL: \#{e}" }
+      exit 1
+    end
+  RUBY
+
+  if version
+    # Test specific version by installing it first
+    puts "  Installing duckdb #{version}..."
+    install_result = system("gem install duckdb -v #{version} --no-document > /dev/null 2>&1")
+    unless install_result
+      puts "  SKIP: Could not install version #{version}"
+      return :skip
+    end
+
+    # Run test with specific version
+    env = { 'DUCKDB_VERSION' => version }
+    IO.popen([env, 'ruby', '-e', test_script], err: [:child, :out]) do |io|
+      output = io.read
+      io.close
+      if $?.success?
+        puts "  PASS"
+        :pass
+      else
+        puts output.lines.map { |l| "  #{l}" }.join
+        :fail
+      end
+    end
+  else
+    # Test current version
+    IO.popen(['ruby', '-e', test_script], err: [:child, :out]) do |io|
+      output = io.read
+      io.close
+      if $?.success?
+        :pass
+      else
+        output.lines.each { |l| puts "  #{l}" }
+        :fail
+      end
+    end
+  end
+end
+
+def test_current_version
+  require 'bundler/setup'
+  require 'duckdb'
+
+  version = Gem.loaded_specs['duckdb']&.version.to_s || 'unknown'
+  min = Gem::Version.new(TESTED_VERSION_MIN)
+  max = Gem::Version.new(TESTED_VERSION_MAX)
+  current = Gem::Version.new(version)
+  in_range = current >= min && current <= max
+
+  puts "Verifying timestamp patch compatibility"
+  puts "=" * 60
+  puts "DuckDB gem version: #{version}"
+  puts "Tested range:       #{TESTED_VERSION_MIN} - #{TESTED_VERSION_MAX}"
+  puts "In range:           #{in_range ? 'Yes' : 'No'}"
+  puts
+
+  puts "Running tests..."
+  result = test_version
+
+  puts
+  puts "=" * 60
+
+  if result == :pass
+    if in_range
+      puts "PASSED"
+      puts
+      puts "All tests passed. duckdb #{version} is compatible."
+    else
+      puts "PASSED (but outside tested range)"
+      puts
+      puts "All tests passed. Consider updating the version range to include #{version}."
+      puts
+      puts "Update TESTED_VERSION_MAX in:"
+      puts "  - lib/active_record/connection_adapters/duckdb/timestamp_monkey_patch.rb"
+      puts "  - bin/verify_timestamp_patch"
+    end
+    0
+  else
+    puts "FAILED"
+    puts
+    puts "Tests failed for duckdb #{version}."
+    1
+  end
+end
+
+def test_all_versions
+  puts "Verifying timestamp patch across all versions"
+  puts "=" * 60
+  puts "Testing versions: #{ALL_VERSIONS.join(', ')}"
+  puts
+
+  results = {}
+
+  ALL_VERSIONS.each do |version|
+    puts "Testing duckdb #{version}..."
+    results[version] = test_version(version)
+  end
+
+  puts
+  puts "=" * 60
+  puts "Summary:"
+  puts
+
+  passed = results.select { |_, v| v == :pass }.keys
+  failed = results.select { |_, v| v == :fail }.keys
+  skipped = results.select { |_, v| v == :skip }.keys
+
+  puts "Passed (#{passed.size}):  #{passed.join(', ')}" if passed.any?
+  puts "Failed (#{failed.size}):  #{failed.join(', ')}" if failed.any?
+  puts "Skipped (#{skipped.size}): #{skipped.join(', ')}" if skipped.any?
+  puts
+
+  if failed.empty? && passed.any?
+    min_passed = passed.min_by { |v| Gem::Version.new(v) }
+    max_passed = passed.max_by { |v| Gem::Version.new(v) }
+    puts "Recommended version range: #{min_passed} - #{max_passed}"
+    0
+  else
+    puts "Some versions failed. Please investigate."
+    1
+  end
+end
+
+def main
+  if ARGV.include?('--all')
+    test_all_versions
+  elsif ARGV.any?
+    version = ARGV.first
+    puts "Testing duckdb #{version}..."
+    result = test_version(version)
+    result == :pass ? 0 : 1
+  else
+    test_current_version
+  end
+end
+
+exit main
