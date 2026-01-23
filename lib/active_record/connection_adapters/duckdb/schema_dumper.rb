@@ -3,9 +3,102 @@
 module ActiveRecord
   module ConnectionAdapters
     module Duckdb
-      # DuckDB-specific schema dumper functionality for generating schema.rb files
-      # Provides methods to properly dump DuckDB-specific column types and constraints
-      module SchemaDumper
+      # DuckDB-specific schema dumper class for generating schema.rb files
+      # Extends Rails' ConnectionAdapters::SchemaDumper to handle DuckDB-specific
+      # column types, constraints, and DuckLake features like partitioning
+      class SchemaDumper < ConnectionAdapters::SchemaDumper # :nodoc:
+        # Override table dumping to include DuckLake-specific features
+        # @param table [String] The table name
+        # @param stream [IO] The output stream
+        # @return [void]
+        def table(table, stream)
+          # Call the parent implementation first
+          super
+
+          # Add DuckLake partitioning if present
+          dump_partitioning(table, stream)
+
+          # Add DuckLake table-level options if present
+          dump_table_options(table, stream)
+        end
+
+        private
+
+        # Override Scenic's defined_views to return empty array for DuckDB
+        # This prevents Scenic's MySQL adapter from being called with DuckDB connections
+        # @return [Array] Empty array of views
+        def defined_views
+          []
+        end
+
+        # Override Scenic's dumpable_views_in_database to return empty array for DuckDB
+        # This prevents Scenic from calling Scenic.database.views which uses MySQL adapter
+        # @return [Array] Empty array of views
+        def dumpable_views_in_database
+          []
+        end
+
+        # Override extensions to also dump DuckLake options
+        # @param stream [IO] The output stream
+        # @return [void]
+        def extensions(stream)
+          super
+          dump_ducklake_options(stream)
+        end
+
+        # Valid DuckLake options that can be set via set_option
+        SETTABLE_DUCKLAKE_OPTIONS = %w[parquet_version parquet_compression].freeze
+
+        # Dumps DuckLake options (parquet_version, parquet_compression, etc.)
+        # @param stream [IO] The output stream
+        # @return [void]
+        def dump_ducklake_options(stream)
+          return unless @connection.respond_to?(:ducklake_options)
+
+          options = @connection.ducklake_options
+          return if options.nil? || options.empty?
+
+          # Filter to only include settable options (not metadata like 'encrypted')
+          settable_options = options.select { |name, _| SETTABLE_DUCKLAKE_OPTIONS.include?(name) }
+          return if settable_options.empty?
+
+          settable_options.sort.each do |name, value|
+            stream.puts "  set_ducklake_option #{name.inspect}, #{value.inspect}"
+          end
+          stream.puts
+        end
+
+        # Dumps DuckLake partitioning for a table
+        # @param table_name [String] The table name
+        # @param stream [IO] The output stream
+        # @return [void]
+        def dump_partitioning(table_name, stream)
+          return unless @connection.respond_to?(:partition_expressions)
+
+          expressions = @connection.partition_expressions(table_name)
+          return if expressions.nil? || expressions.empty?
+
+          # Format the expressions array as Ruby code
+          expressions_code = expressions.map { |e| e.inspect }.join(', ')
+          stream.puts "  set_partitioned_by #{table_name.inspect}, [#{expressions_code}]"
+        end
+
+        # Dumps DuckLake table-level options
+        # @param table_name [String] The table name
+        # @param stream [IO] The output stream
+        # @return [void]
+        def dump_table_options(table_name, stream)
+          return unless @connection.respond_to?(:ducklake_table_options)
+
+          options = @connection.ducklake_table_options(table_name)
+          return if options.nil? || options.empty?
+
+          options.sort.each do |name, value|
+            stream.puts "  set_ducklake_option #{name.inspect}, #{value.inspect}, #{table_name.inspect}"
+          end
+          stream.puts
+        end
+
         # Generates column specification for schema dumping
         # @param column [ActiveRecord::ConnectionAdapters::Column] The column to generate spec for
         # @return [Array] Array containing column type and options hash
@@ -49,6 +142,27 @@ module ActiveRecord
             :date
           when /^TIME$/i
             :time
+          # DuckDB-specific signed integer types
+          when /^TINYINT$/i
+            :tinyint
+          when /^SMALLINT$/i
+            :smallint
+          when /^HUGEINT$/i
+            :hugeint
+          # DuckDB-specific unsigned integer types
+          when /^UTINYINT$/i
+            :utinyint
+          when /^USMALLINT$/i
+            :usmallint
+          when /^UINTEGER$/i
+            :uinteger
+          when /^UBIGINT$/i
+            :ubigint
+          when /^UHUGEINT$/i
+            :uhugeint
+          # DuckDB interval type
+          when /^INTERVAL$/i
+            :interval
           else
             column.type
           end
