@@ -98,6 +98,137 @@ production:
   database: :memory
 ```
 
+### Advanced Connection Configuration
+
+The adapter supports advanced configuration options for extensions, settings, secrets, and database attachments. These are configured in your `database.yml` file.
+
+#### Extensions
+
+Install and load DuckDB extensions automatically on connection:
+
+```yaml
+development:
+  adapter: duckdb
+  database: db/development.duckdb
+  extensions:
+    - httpfs
+    - postgres_scanner
+    - parquet
+```
+
+#### Settings
+
+Configure DuckDB settings. The adapter applies secure defaults which you can override:
+
+```yaml
+development:
+  adapter: duckdb
+  database: db/development.duckdb
+  settings:
+    threads: 4
+    memory_limit: '2GB'
+    max_temp_directory_size: '8GB'
+```
+
+**Default Settings:**
+
+| Setting | Default Value | Description |
+|---------|---------------|-------------|
+| `allow_persistent_secrets` | `false` | Disable persistent secrets for security |
+| `allow_community_extensions` | `false` | Disable community extensions |
+| `autoinstall_known_extensions` | `false` | Disable auto-installing extensions |
+| `autoload_known_extensions` | `false` | Disable auto-loading extensions |
+| `threads` | `1` | Number of threads for query execution |
+| `memory_limit` | `'1GB'` | Maximum memory usage |
+| `max_temp_directory_size` | `'4GB'` | Maximum temp directory size |
+
+**Notes:**
+- `allow_persistent_secrets` and `allow_community_extensions` are applied before loading extensions
+- `lock_configuration = true` is automatically applied at the end to lock all settings
+
+#### Secrets
+
+Configure secrets for accessing external services (S3, PostgreSQL, etc.). Two styles are supported:
+
+**Style 1: Unnamed secrets** (key is the secret type):
+
+```yaml
+development:
+  adapter: duckdb
+  database: ducklake
+  secrets:
+    postgres:
+      host: localhost
+      database: mydb
+      user: admin
+      password: secret
+    s3:
+      key_id: AKIAIOSFODNN7EXAMPLE
+      secret: wJalrXUtnFEMI/K7MDENG
+      region: us-east-1
+```
+
+**Style 2: Named secrets** (explicit `type` key, hash key becomes secret name):
+
+```yaml
+development:
+  adapter: duckdb
+  database: ducklake
+  secrets:
+    my_prod_bucket:
+      type: s3
+      key_id: AKIAIOSFODNN7EXAMPLE
+      secret: wJalrXUtnFEMI/K7MDENG
+      region: us-east-1
+      scope: 's3://prod-bucket'
+    my_dev_bucket:
+      type: s3
+      key_id: AKIAIOSFODNN7EXAMPLE2
+      secret: anotherSecretKey
+      region: us-west-2
+      scope: 's3://dev-bucket'
+```
+
+Named secrets allow multiple secrets of the same type with different scopes.
+
+#### Database Attachments
+
+Attach external databases (PostgreSQL, MySQL, DuckLake, etc.):
+
+```yaml
+development:
+  adapter: duckdb
+  database: ducklake
+  extensions:
+    - postgres_scanner
+    - ducklake
+  secrets:
+    postgres:
+      host: localhost
+      database: mydb
+      user: admin
+      password: secret
+  attachments:
+    - name: pg_db
+      connection_string: 'postgres:'
+      type: POSTGRES
+    - name: ducklake
+      connection_string: 'ducklake:postgres:'
+      options: "DATA_PATH 's3://my-bucket', ENCRYPTED"
+```
+
+If you need to switch to a specific attached database after configuration, you can use the `use_database` option:
+
+```yaml
+development:
+  adapter: duckdb
+  database: db/development.duckdb
+  attachments:
+    - name: analytics
+      connection_string: 's3://bucket/analytics.duckdb'
+  use_database: analytics  # Switch to the attached database
+```
+
 ### Sample App setup
 
 The following steps are required to setup a sample application using the `activerecord-duckdb` gem:

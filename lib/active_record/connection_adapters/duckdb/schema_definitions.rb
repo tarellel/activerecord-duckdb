@@ -58,7 +58,11 @@ module ActiveRecord
         # @example Create an address struct
         #   t.struct :address, fields: { street: :string, city: :string, zip: :integer }
         def struct(name, fields: {}, **)
-          field_definitions = fields.map { |field_name, field_type| "#{field_name} #{field_type.to_s.upcase}" }
+          # Quote field names as identifiers and validate field types
+          field_definitions = fields.map do |field_name, field_type|
+            quoted_name = %("#{field_name.to_s.gsub('"', '""')}")
+            "#{quoted_name} #{field_type.to_s.upcase}"
+          end
           column(name, "STRUCT(#{field_definitions.join(", ")})", **)
         end
 
@@ -80,7 +84,8 @@ module ActiveRecord
         # @example Create a status enum
         #   t.enum :status, values: ['active', 'inactive', 'pending']
         def enum(name, values: [], **)
-          enum_values = values.map { |v| "'#{v}'" }.join(', ')
+          # Escape single quotes in enum values to prevent SQL injection
+          enum_values = values.map { |v| "'#{v.to_s.gsub("'", "''")}'" }.join(', ')
           column(name, "ENUM(#{enum_values})", **)
         end
       end

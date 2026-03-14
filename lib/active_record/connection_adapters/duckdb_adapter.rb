@@ -3,7 +3,10 @@
 require 'duckdb'
 require 'active_record'
 require 'active_record/connection_adapters/abstract_adapter'
+
+require 'active_record/connection_adapters/duckdb/timestamp_monkey_patch'
 require 'active_record/connection_adapters/duckdb/column'
+require 'active_record/connection_adapters/duckdb/type/interval'
 require 'active_record/connection_adapters/duckdb/database_limits'
 require 'active_record/connection_adapters/duckdb/database_statements'
 require 'active_record/connection_adapters/duckdb/quoting'
@@ -17,17 +20,33 @@ require 'active_record/connection_adapters/duckdb/schema_dumper'
 # sqlite3 adapter: https://github.com/rails/rails/blob/main/activerecord/lib/active_record/connection_adapters/sqlite3_adapter.rb
 
 module ActiveRecord
+  module ConnectionAdapters
+    # Raised when attempting to use savepoints with DuckDB, which does not support them.
+    class SavepointsNotSupported < NotImplementedError
+      def initialize
+        super('DuckDB does not support savepoints. Avoid using transaction(requires_new: true) or nested transactions that rely on savepoint isolation.')
+      end
+    end
+  end
+
   module ConnectionHandling
     # Establishes a connection to a DuckDB database
+    #
+    # @deprecated This method is provided for legacy compatibility only.
+    #   In Rails 8+, adapters are registered via ActiveRecord::ConnectionAdapters.register
+    #   and connections are created by calling AdapterClass.new(config) directly.
+    #   Use ActiveRecord::Base.establish_connection instead for standard Rails usage.
+    #
     # @param config [Hash] Database configuration options
     # @return [ActiveRecord::ConnectionAdapters::DuckdbAdapter] The database adapter instance
     # @raise [ActiveRecord::ConnectionNotEstablished] If connection fails
     def duckdb_connection(config)
       config = config.symbolize_keys
       begin
-        # Create adapter first, then let it establish connection
+        # Create adapter and establish connection via Rails lifecycle
+        # connect! calls verify! which calls reconnect! and configure_connection
         adapter = ConnectionAdapters::DuckdbAdapter.new(nil, logger, {}, config)
-        adapter.send(:connect)
+        adapter.connect!
         adapter
       rescue StandardError => e
         raise ActiveRecord::ConnectionNotEstablished,
@@ -45,7 +64,29 @@ module ActiveRecord
       include Duckdb::DatabaseStatements
       include Duckdb::Quoting
       include Duckdb::SchemaStatements
-      include Duckdb::SchemaDumper
+
+      # Include Rails version-specific database statements.
+      # Rails 8.0+: Use raw_execute, let base class handle internal_exec_query.
+      # Rails 7.2: Must implement internal_exec_query directly.
+      if ActiveRecord::VERSION::MAJOR >= 8
+        require 'active_record/connection_adapters/duckdb/database_statements_rails8'
+        include Duckdb::DatabaseStatementsRails8
+      else
+        require 'active_record/connection_adapters/duckdb/database_statements_rails72'
+        include Duckdb::DatabaseStatementsRails72
+      end
+
+      # Include Rails version-specific schema statements.
+      # Rails 8.1+: Column constructor includes cast_type parameter.
+      # Rails 7.2/8.0: Column constructor without cast_type parameter.
+      if ActiveRecord::VERSION::MAJOR > 8 ||
+         (ActiveRecord::VERSION::MAJOR == 8 && ActiveRecord::VERSION::MINOR >= 1)
+        require 'active_record/connection_adapters/duckdb/schema_statements_rails81'
+        include Duckdb::SchemaStatementsRails81
+      else
+        require 'active_record/connection_adapters/duckdb/schema_statements_rails80'
+        include Duckdb::SchemaStatementsRails80
+      end
 
       # Allow customization of primary key type like PostgreSQL and MySQL adapters do
       class_attribute :primary_key_type, default: :bigint
@@ -53,34 +94,113 @@ module ActiveRecord
       # DB configuration if used in memory mode
       MEMORY_MODE_KEYS = [:memory, 'memory', ':memory:', ':memory'].freeze
 
+      class << self
+        # Creates a new DuckDB database connection
+        # @param config [Hash] Database configuration
+        # @return [DuckDB::Connection] The raw database connection
+        def new_client(config)
+          database = config[:database] || :memory
+          db = if MEMORY_MODE_KEYS.include?(database)
+                 DuckDB::Database.open
+               else
+                 DuckDB::Database.open(database.to_s)
+               end
+          db.connect
+        end
+
+        private
+
+        # Initializes the type map with DuckDB-specific type mappings
+        # @param m [ActiveRecord::Type::TypeMap] The type map to initialize
+        def initialize_type_map(m)
+          m.register_type(/^boolean$/i,    Type::Boolean.new)
+          m.register_type(/^date$/i,       Type::Date.new)
+          m.register_type(/^time$/i,       Type::Time.new)
+          m.register_type(/^timestamp$/i,  Type::DateTime.new)
+          m.register_type(/^datetime$/i,   Type::DateTime.new)
+          m.register_type(/^float$/i,      Type::Float.new)
+          m.register_type(/^real$/i,       Type::Float.new)
+          m.register_type(/^double$/i,     Type::Float.new)
+
+          # Integer types with proper byte limits
+          m.register_type(/^tinyint$/i)    { Type::Integer.new(limit: 1) }
+          m.register_type(/^smallint$/i)   { Type::Integer.new(limit: 2) }
+          m.register_type(/^integer$/i)    { Type::Integer.new(limit: 4) }
+          # BigInteger handles unlimited bytes
+          m.register_type(/^bigint$/i)     { Type::BigInteger.new }
+          m.register_type(/^hugeint$/i)    { Type::BigInteger.new }
+
+          # Unsigned integer types
+          m.register_type(/^utinyint$/i)   { Type::UnsignedInteger.new(limit: 1) }
+          m.register_type(/^usmallint$/i)  { Type::UnsignedInteger.new(limit: 2) }
+          m.register_type(/^uinteger$/i)   { Type::UnsignedInteger.new(limit: 4) }
+          m.register_type(/^ubigint$/i)    { Type::UnsignedInteger.new(limit: 8) }
+          m.register_type(/^uhugeint$/i)   { Type::BigInteger.new }
+
+          # String types
+          m.register_type(/^varchar/i,     Type::String.new)
+          m.register_type(/^text$/i,       Type::Text.new)
+          m.register_type(/^uuid$/i,       Type::String.new)
+
+          # Binary
+          m.register_type(/^blob$/i,       Type::Binary.new)
+          m.register_type(/^bytea$/i,      Type::Binary.new)
+
+          # Decimal with precision/scale
+          m.register_type(/^decimal/i)     { Type::Decimal.new }
+          m.register_type(/^numeric/i)     { Type::Decimal.new }
+
+          # Interval type - maps to ActiveSupport::Duration
+          m.register_type(/^interval$/i)   { Duckdb::Type::Interval.new }
+        end
+      end
+
+      # Type map for DuckDB SQL types to ActiveRecord types
+      TYPE_MAP = Type::TypeMap.new.tap { |m| initialize_type_map(m) }
+
       # https://duckdb.org/docs/stable/sql/data_types/overview.html
+      # Integer limits (in bytes): tinyint=1, smallint=2, integer=4, bigint=8
       NATIVE_DATABASE_TYPES = {
         primary_key: 'INTEGER PRIMARY KEY',
         string: { name: 'VARCHAR' },
-        integer: { name: 'INTEGER' },
+        integer: { name: 'INTEGER', limit: 4 },
         float: { name: 'REAL' },
         decimal: { name: 'DECIMAL' },
         datetime: { name: 'TIMESTAMP' },
         time: { name: 'TIME' },
         date: { name: 'DATE' },
-        bigint: { name: 'BIGINT' },
+        bigint: { name: 'BIGINT', limit: 8 },
         binary: { name: 'BLOB' },
         boolean: { name: 'BOOLEAN' },
-        uuid: { name: 'UUID' }
+        uuid: { name: 'UUID' },
+        # DuckDB-specific signed integer types
+        tinyint: { name: 'TINYINT', limit: 1 },
+        smallint: { name: 'SMALLINT', limit: 2 },
+        hugeint: { name: 'HUGEINT' },
+        # DuckDB-specific unsigned integer types
+        utinyint: { name: 'UTINYINT', limit: 1 },
+        usmallint: { name: 'USMALLINT', limit: 2 },
+        uinteger: { name: 'UINTEGER', limit: 4 },
+        ubigint: { name: 'UBIGINT', limit: 8 },
+        uhugeint: { name: 'UHUGEINT' },
+        # Other DuckDB types
+        interval: { name: 'INTERVAL' }
       }.freeze
 
-      # Initializes a new DuckDB adapter instance
-      # @param args [Array] Arguments passed to the parent AbstractAdapter
-      def initialize(*args)
-        super
-      end
+      # Settings that MUST be applied before loading extensions
+      EARLY_SETTINGS = %i[allow_persistent_secrets allow_community_extensions].freeze
 
-      # Reconnects to the DuckDB database by disconnecting and connecting again
-      # @return [void]
-      def reconnect
-        disconnect
-        connect
-      end
+      # Default DuckDB settings for secure and predictable behavior
+      # Note: lock_configuration is handled separately at the end of configure_connection
+      DEFAULT_SETTINGS = {
+        allow_persistent_secrets: false,
+        allow_community_extensions: false,
+        autoinstall_known_extensions: false,
+        autoload_known_extensions: false,
+        threads: 1,
+        memory_limit: '1GiB',
+        max_temp_directory_size: '4GiB'
+      }.freeze
 
       # Disconnects from the DuckDB database and cleans up the connection
       # @return [void]
@@ -99,6 +219,15 @@ module ActiveRecord
       # @return [DuckDB::Connection, nil] The raw connection object or nil if not connected
       def raw_connection
         @raw_connection || @connection
+      end
+
+      # Looks up the cast type for a given SQL type string
+      # Uses the DuckDB TYPE_MAP to return appropriate ActiveRecord types
+      # This ensures BIGINT columns use BigInteger type for full 8-byte range support
+      # @param sql_type [String] The SQL type string (e.g., 'BIGINT', 'INTEGER')
+      # @return [ActiveRecord::Type::Value] The corresponding ActiveRecord type
+      def lookup_cast_type(sql_type)
+        TYPE_MAP.lookup(sql_type)
       end
 
       class << self
@@ -127,15 +256,50 @@ module ActiveRecord
       end
 
       # Indicates whether the adapter supports INSERT...RETURNING syntax
-      # @return [Boolean] always returns true for DuckDB
+      # DuckLake does NOT support INSERT...RETURNING, so we check for DuckLake mode
+      # @return [Boolean] true for regular DuckDB, false for DuckLake
       def use_insert_returning?
-        true
+        !ducklake?
       end
 
       # Indicates whether the adapter supports INSERT RETURNING for Rails 8
-      # @return [Boolean] always returns true for DuckDB
+      # DuckLake does NOT support INSERT...RETURNING, so we check for DuckLake mode
+      # @return [Boolean] true for regular DuckDB, false for DuckLake
       def supports_insert_returning?
-        true
+        !ducklake?
+      end
+
+      # Detects if the current database is a DuckLake database
+      # Uses a metadata query to check the database type
+      # @return [Boolean] true if current database is DuckLake, false otherwise
+      def ducklake?
+        return @ducklake if defined?(@ducklake)
+
+        @ducklake = begin
+          with_raw_connection do |conn|
+            result = conn.query('SELECT type FROM duckdb_databases() WHERE database_name = current_database()')
+            db_type = result.first&.first
+            db_type.to_s.downcase == 'ducklake'
+          end
+        rescue DuckDB::Error
+          false
+        end
+      end
+
+      # Checks if the DuckLake extension is available and can be loaded
+      # @return [Boolean] true if DuckLake extension is available, false otherwise
+      def ducklake_extension_available?
+        return @ducklake_extension_available if defined?(@ducklake_extension_available)
+
+        @ducklake_extension_available = begin
+          with_raw_connection do |conn|
+            conn.execute('INSTALL ducklake')
+            conn.execute('LOAD ducklake')
+          end
+          true
+        rescue DuckDB::Error
+          false
+        end
       end
 
       # Indicates whether the adapter supports INSERT ON DUPLICATE SKIP syntax
@@ -156,6 +320,25 @@ module ActiveRecord
       def supports_insert_on_duplicate_update?
         false
       end
+
+      # DuckDB does not support savepoints at the SQL level.
+      # @return [Boolean] always returns false
+      def supports_savepoints? = false
+
+      # DuckDB does not support savepoints.
+      # @param _name [String] The savepoint name (ignored)
+      # @raise [SavepointsNotSupported] always raises since DuckDB doesn't support savepoints
+      def create_savepoint(_name = nil) = raise SavepointsNotSupported
+
+      # DuckDB does not support savepoints.
+      # @param _name [String] The savepoint name (ignored)
+      # @raise [SavepointsNotSupported] always raises since DuckDB doesn't support savepoints
+      def exec_rollback_to_savepoint(_name = nil) = raise SavepointsNotSupported
+
+      # DuckDB does not support savepoints.
+      # @param _name [String] The savepoint name (ignored)
+      # @raise [SavepointsNotSupported] always raises since DuckDB doesn't support savepoints
+      def release_savepoint(_name = nil) = raise SavepointsNotSupported
 
       # Determines if primary key should be prefetched before insert
       # @param _table_name [String] The table name (unused)
@@ -192,9 +375,46 @@ module ActiveRecord
       end
 
       # Returns the native database types supported by DuckDB
+      # DuckLake doesn't support PRIMARY KEY constraints, so we return a modified version
       # @return [Hash] Hash mapping ActiveRecord types to DuckDB native types
       def native_database_types
-        NATIVE_DATABASE_TYPES
+        return NATIVE_DATABASE_TYPES unless ducklake?
+
+        # DuckLake doesn't support PRIMARY KEY/UNIQUE constraints
+        @ducklake_database_types ||= NATIVE_DATABASE_TYPES.merge(
+          primary_key: 'INTEGER'
+        )
+      end
+
+      # Configures the DuckDB connection with extensions, settings, secrets, and attachments.
+      # DuckDB locks configuration permanently after initial setup, so we skip reconfiguration
+      # if the connection is already configured. This is necessary because Rails/test-prof
+      # may call reset! which triggers configure_connection again.
+      # @return [void]
+      def configure_connection
+        # Skip reconfiguration if already configured - DuckDB locks configuration permanently
+        return if configuration_locked?
+
+        super
+        apply_early_settings
+        install_extensions
+        apply_settings
+        create_secrets
+        attach_databases
+        use_database
+        lock_configuration
+      end
+
+      # Checks if DuckDB configuration is locked.
+      # Once lock_configuration is set to true, no configuration changes can be made.
+      # @return [Boolean] true if configuration is locked
+      def configuration_locked?
+        return false unless raw_connection
+
+        result = raw_connection.query("SELECT current_setting('lock_configuration')")
+        result.first&.first == true
+      rescue DuckDB::Error
+        false
       end
 
       # Returns column definitions for a table using PRAGMA table_info
@@ -237,18 +457,19 @@ module ActiveRecord
                            end
 
           # Convert PRAGMA results to match information_schema format
+          # Note: DuckLake returns booleans (true/false) while regular DuckDB may return integers (1/0)
           [
-            column_name,           # column_name
-            formatted_type,        # formatted_type
-            column_default,        # column_default
-            not_null == 1,         # not_null (true if NOT NULL constraint)
-            nil,                   # type_id
-            nil,                   # type_modifier
-            nil,                   # collation_name
-            nil,                   # comment
-            nil,                   # identity
-            nil,                   # generated
-            pk == 1                # primary_key flag (true if primary key)
+            column_name,                  # column_name
+            formatted_type,               # formatted_type
+            column_default,               # column_default
+            not_null.in?([1, true]),      # not_null (true if NOT NULL constraint)
+            nil,                          # type_id
+            nil,                          # type_modifier
+            nil,                          # collation_name
+            nil,                          # comment
+            nil,                          # identity
+            nil,                          # generated
+            pk.in?([1, true])             # primary_key flag (true if primary key)
           ]
         end
       end
@@ -270,7 +491,7 @@ module ActiveRecord
       # @param sequence_name [String] The name of the sequence
       # @return [String] SQL expression for next sequence value
       def next_sequence_value(sequence_name)
-        "nextval('#{sequence_name}')"
+        "nextval(#{quote(sequence_name)})"
       end
 
       # Generates default sequence name following PostgreSQL/Oracle conventions
@@ -378,6 +599,14 @@ module ActiveRecord
         end
       end
 
+      # Creates a schema dumper instance for DuckDB
+      # Uses the DuckDB-specific SchemaDumper class to handle DuckDB types and DuckLake features
+      # @param options [Hash] Schema dumper options
+      # @return [Duckdb::SchemaDumper] The schema dumper instance
+      def create_schema_dumper(options) # :nodoc:
+        Duckdb::SchemaDumper.create(self, options)
+      end
+
       # Returns table options for schema dumping
       # @param table_name [String] The name of the table
       # @return [Hash] Hash of table options for schema dumping
@@ -420,16 +649,149 @@ module ActiveRecord
 
       private
 
+      # Reconnects to the database by closing existing connection and establishing new one.
+      # Called by Rails' reconnect! which will also call configure_connection.
+      # We reset the @duckdb_configured flag so the new connection gets configured.
+      # @return [void]
+      def reconnect
+        @raw_connection&.close
+        @duckdb_configured = false  # Reset so configure_connection will run on new connection
+        remove_instance_variable(:@ducklake) if defined?(@ducklake)  # Reset ducklake detection
+        connect
+      end
+
       # Establishes the actual connection to the DuckDB database
       # @return [void]
       def connect
-        database = @config[:database] || :memory
-        db = if MEMORY_MODE_KEYS.include?(database)
-               DuckDB::Database.open
-             else
-               DuckDB::Database.open(database)
-             end
-        @raw_connection = db.connect
+        @raw_connection = self.class.new_client(@config)
+      end
+
+      # Returns merged settings (defaults + user config)
+      # @return [Hash] Merged settings hash
+      def merged_settings
+        @merged_settings ||= DEFAULT_SETTINGS.merge((@config[:settings] || {}).transform_keys(&:to_sym))
+      end
+
+      # Applies settings that must be set before loading extensions
+      # @return [void]
+      def apply_early_settings
+        merged_settings.each do |key, value|
+          next unless EARLY_SETTINGS.include?(key)
+
+          execute_setting(key, value)
+        end
+      end
+
+      # Installs and loads configured extensions
+      # @return [void]
+      def install_extensions
+        extensions = @config[:extensions] || []
+        extensions.each do |extension|
+          raw_connection.execute("INSTALL #{extension}")
+          raw_connection.execute("LOAD #{extension}")
+        end
+      end
+
+      # Applies settings that can be set after loading extensions
+      # @return [void]
+      def apply_settings
+        merged_settings.each do |key, value|
+          next if EARLY_SETTINGS.include?(key)
+
+          execute_setting(key, value)
+        end
+      end
+
+      # Executes a single SET statement
+      # @param key [Symbol, String] Setting name
+      # @param value [Object] Setting value
+      # @return [void]
+      def execute_setting(key, value)
+        formatted_value = case value
+                          when String then "'#{value}'"
+                          when TrueClass, FalseClass then value.to_s
+                          else value.to_s
+                          end
+        raw_connection.execute("SET #{key} = #{formatted_value}")
+      end
+
+      # Creates secrets from configuration
+      # If a secret has an explicit 'type' key, the hash key becomes the secret name
+      # Otherwise, the hash key is the secret type (unnamed secret)
+      # @return [void]
+      def create_secrets
+        secrets = @config[:secrets] || {}
+        secrets.each do |key, fields|
+          fields = fields.transform_keys(&:to_sym)
+          type = fields.delete(:type)
+          name = type ? key : nil # Named secret: key is the name, type is explicit
+          type ||= key # Unnamed secret: key is the type
+          formatted_fields = format_secret_fields(fields)
+          sql = +'CREATE SECRET'
+          sql << " #{name}" if name
+          sql << " (TYPE #{type}"
+          sql << ", #{formatted_fields}" unless formatted_fields.empty?
+          sql << ')'
+          raw_connection.execute(sql)
+        end
+      end
+
+      # Formats secret fields for CREATE SECRET statement
+      # @param fields [Hash] Secret fields
+      # @return [String] Formatted fields string
+      def format_secret_fields(fields)
+        fields.filter_map do |key, value|
+          next if value.nil?
+
+          formatted_value = case value
+                            when Integer then value.to_s
+                            else "'#{value}'"
+                            end
+          "#{key.to_s.upcase} #{formatted_value}"
+        end.join(', ')
+      end
+
+      # Attaches configured databases
+      # @return [void]
+      def attach_databases
+        attachments = @config[:attachments] || []
+        attachments.each do |attachment|
+          attachment = attachment.transform_keys(&:to_sym)
+          name = attachment[:name]
+          connection_string = attachment[:connection_string]
+          type = attachment[:type]
+          options = attachment[:options]
+
+          sql = "ATTACH '#{connection_string}' AS #{name}"
+          params = []
+          params << "TYPE #{type}" if type
+          params << options if options
+          sql += " (#{params.join(", ")})" unless params.empty?
+
+          raw_connection.execute(sql)
+        end
+      end
+
+      # Sets the active database using USE statement
+      # This is only needed when you want to switch to a different attached database
+      # The main database opened via DuckDB::Database.open is already active
+      # @return [void]
+      def use_database
+        # The use_database config option allows switching to a specific attached database
+        # This is NOT the same as the database config option which specifies the file to open
+        use_db = @config[:use_database]
+        return if use_db.nil?
+
+        raw_connection.execute("USE #{use_db}")
+        # Reset ducklake? memoization since current_database has changed
+        remove_instance_variable(:@ducklake) if defined?(@ducklake)
+      end
+
+      # Locks the DuckDB configuration to prevent further changes
+      # This should be called at the very end of configure_connection
+      # @return [void]
+      def lock_configuration
+        raw_connection.execute('SET lock_configuration = true')
       end
     end
   end

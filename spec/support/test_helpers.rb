@@ -9,6 +9,25 @@ module TestHelpers
     }
   end
 
+  # Creates a standalone DuckDB connection for testing adapter-level behavior.
+  # Unlike establish_test_connection, this creates a direct adapter instance
+  # that is independent of ActiveRecord::Base.connection.
+  #
+  # @param options [Hash] Connection options (merged with memory database defaults)
+  # @yield [conn] The adapter connection instance
+  # @return [void]
+  def with_memory_connection(options = {})
+    options = options.dup
+    options[:database] = ':memory:'
+    options[:adapter] = 'duckdb'
+    conn = ActiveRecord::ConnectionAdapters::DuckdbAdapter.new(options)
+    conn.connect!
+
+    yield(conn)
+  ensure
+    conn&.disconnect!
+  end
+
   def file_config(database_path = 'tmp/test.duckdb')
     {
       adapter: 'duckdb',
@@ -87,13 +106,14 @@ module TestHelpers
   end
 
   # Query helpers
-  def execute_sql(sql)
-    ActiveRecord::Base.connection.execute(sql)
+  def execute_sql(sql, connection: nil)
+    conn = connection || ActiveRecord::Base.connection
+    conn.execute(sql)
   end
 
-  def query_value(sql)
-    result = execute_sql(sql)
-    result.rows.first&.first
+  def query_value(sql, connection: nil)
+    result = execute_sql(sql, connection: connection)
+    result.first&.first
   end
 
   def count_records(table_name, conditions = nil)
@@ -163,8 +183,11 @@ module TestHelpers
   end
 
   # Error handling helpers
+  # DuckDB errors are wrapped in ActiveRecord::StatementInvalid by Rails
   def expect_duckdb_error(&)
-    expect(&).to raise_error(DuckDB::Error)
+    expect(&).to raise_error(ActiveRecord::StatementInvalid) do |error|
+      expect(error.cause).to be_a(DuckDB::Error)
+    end
   end
 
   def expect_activerecord_error(error_class = ActiveRecord::StatementInvalid, &)

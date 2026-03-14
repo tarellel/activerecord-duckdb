@@ -40,8 +40,7 @@ RSpec.describe 'ActiveRecord::DuckDB Integration' do
       it 'executes basic SQL queries' do
         ActiveRecord::Base.establish_connection(config)
 
-        result = ActiveRecord::Base.connection.execute('SELECT 1 as test_value')
-        expect(result.to_a.first.first).to eq(1)
+        expect(query_value('SELECT 1 as test_value')).to eq(1)
       end
     end
 
@@ -319,13 +318,13 @@ RSpec.describe 'ActiveRecord::DuckDB Integration' do
     it 'handles SQL syntax errors gracefully' do
       expect do
         ActiveRecord::Base.connection.execute('INVALID SQL STATEMENT')
-      end.to raise_error(DuckDB::Error)
+      end.to raise_error(ActiveRecord::StatementInvalid)
     end
 
     it 'handles missing table errors' do
       expect do
         ActiveRecord::Base.connection.columns('nonexistent_table')
-      end.to raise_error(DuckDB::Error)
+      end.to raise_error(ActiveRecord::StatementInvalid)
     end
   end
 
