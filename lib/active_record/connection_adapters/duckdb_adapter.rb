@@ -381,7 +381,7 @@ module ActiveRecord
         return NATIVE_DATABASE_TYPES unless ducklake?
 
         # DuckLake doesn't support PRIMARY KEY/UNIQUE constraints
-        @ducklake_database_types ||= NATIVE_DATABASE_TYPES.merge(
+        @native_database_types ||= NATIVE_DATABASE_TYPES.merge(
           primary_key: 'INTEGER'
         )
       end
@@ -655,8 +655,8 @@ module ActiveRecord
       # @return [void]
       def reconnect
         @raw_connection&.close
-        @duckdb_configured = false  # Reset so configure_connection will run on new connection
-        remove_instance_variable(:@ducklake) if defined?(@ducklake)  # Reset ducklake detection
+        @duckdb_configured = false # Reset so configure_connection will run on new connection
+        remove_instance_variable(:@ducklake) if defined?(@ducklake) # Reset ducklake detection
         connect
       end
 

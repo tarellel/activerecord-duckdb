@@ -6,23 +6,23 @@ source 'https://rubygems.org'
 gemspec
 
 gem 'irb'
-gem 'rake', '~> 13.0'
+gem 'rake'
 
 group :development do
   gem 'appraisal'
   gem 'debug'
   gem 'fasterer'
-  gem 'rubocop', '~> 1.76', require: false
-  gem 'rubocop-performance', '~> 1.25', require: false
-  gem 'rubocop-rake', '~> 0.7', require: false
-  gem 'rubocop-rspec', '~> 3.6', require: false
+  gem 'rubocop', require: false
+  gem 'rubocop-performance', require: false
+  gem 'rubocop-rake', require: false
+  gem 'rubocop-rspec', require: false
   gem 'rubocop-thread_safety', require: false
   gem 'sord'
 end
 
 group :test do
   gem 'fuubar'
-  gem 'rspec', '~> 3.13'
+  gem 'rspec'
   gem 'simplecov', require: false
   gem 'simplecov-tailwindcss', require: false
 end

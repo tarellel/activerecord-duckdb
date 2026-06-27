@@ -35,8 +35,8 @@ RSpec.describe 'DuckLake Integration' do
       extensions: ['ducklake'],
       attachments: [{
         name: 'ducklake',
-        connection_string: "ducklake:#{File.join(temp_dir, 'test.ducklake')}",
-        options: "DATA_PATH '#{File.join(temp_dir, 'data')}'"
+        connection_string: "ducklake:#{File.join(temp_dir, "test.ducklake")}",
+        options: "DATA_PATH '#{File.join(temp_dir, "data")}'"
       }],
       use_database: 'ducklake'
     }
@@ -66,7 +66,7 @@ RSpec.describe 'DuckLake Integration' do
       ActiveRecord::Base.establish_connection(ducklake_config(temp_dir))
 
       # Verify we're using the ducklake database
-      result = ActiveRecord::Base.connection.execute("SELECT current_database()")
+      result = ActiveRecord::Base.connection.execute('SELECT current_database()')
       expect(result.first.first).to eq('ducklake')
     end
 
@@ -74,7 +74,7 @@ RSpec.describe 'DuckLake Integration' do
       ActiveRecord::Base.establish_connection(ducklake_config(temp_dir))
 
       # Create a table to trigger metadata file creation
-      ActiveRecord::Base.connection.execute("CREATE TABLE test_table (id INTEGER, name VARCHAR)")
+      ActiveRecord::Base.connection.execute('CREATE TABLE test_table (id INTEGER, name VARCHAR)')
 
       # The metadata file should exist
       metadata_file = File.join(temp_dir, 'test.ducklake')
@@ -85,7 +85,7 @@ RSpec.describe 'DuckLake Integration' do
       ActiveRecord::Base.establish_connection(ducklake_config(temp_dir))
 
       # Create a table and insert data
-      ActiveRecord::Base.connection.execute("CREATE TABLE data_test (id INTEGER, name VARCHAR)")
+      ActiveRecord::Base.connection.execute('CREATE TABLE data_test (id INTEGER, name VARCHAR)')
       ActiveRecord::Base.connection.execute("INSERT INTO data_test VALUES (1, 'test')")
 
       # Data files (Parquet) should be created in the data directory
@@ -97,13 +97,13 @@ RSpec.describe 'DuckLake Integration' do
     it 'persists data across reconnections' do
       # First connection - create and populate table
       ActiveRecord::Base.establish_connection(ducklake_config(temp_dir))
-      ActiveRecord::Base.connection.execute("CREATE TABLE persist_test (id INTEGER, value VARCHAR)")
+      ActiveRecord::Base.connection.execute('CREATE TABLE persist_test (id INTEGER, value VARCHAR)')
       ActiveRecord::Base.connection.execute("INSERT INTO persist_test VALUES (1, 'hello')")
       ActiveRecord::Base.remove_connection
 
       # Second connection - verify data persists
       ActiveRecord::Base.establish_connection(ducklake_config(temp_dir))
-      result = ActiveRecord::Base.connection.execute("SELECT value FROM persist_test WHERE id = 1")
+      result = ActiveRecord::Base.connection.execute('SELECT value FROM persist_test WHERE id = 1')
       expect(result.first.first).to eq('hello')
     end
   end
@@ -158,7 +158,7 @@ RSpec.describe 'DuckLake Integration' do
 
     describe 'standard column types' do
       before do
-        # Note: DuckLake only supports literal defaults, so we don't use default: here
+        # NOTE: DuckLake only supports literal defaults, so we don't use default: here
         ActiveRecord::Base.connection.create_table(:type_test, id: false) do |t|
           t.string :string_col, limit: 100
           t.text :text_col
@@ -250,6 +250,16 @@ RSpec.describe 'DuckLake Integration' do
 
   describe 'ActiveRecord model operations with DuckLake' do
     let(:temp_dir) { Dir.mktmpdir('ducklake_model_test') }
+    let(:user_class) do
+      Class.new(ActiveRecord::Base) do
+        self.table_name = 'ducklake_users'
+        self.primary_key = 'id'
+
+        def self.name
+          'DucklakeUser'
+        end
+      end
+    end
 
     before do
       FileUtils.mkdir_p(File.join(temp_dir, 'data'))
@@ -276,17 +286,6 @@ RSpec.describe 'DuckLake Integration' do
       end
       ActiveRecord::Base.remove_connection if ActiveRecord::Base.connected?
       FileUtils.rm_rf(temp_dir)
-    end
-
-    let(:user_class) do
-      Class.new(ActiveRecord::Base) do
-        self.table_name = 'ducklake_users'
-        self.primary_key = 'id'
-
-        def self.name
-          'DucklakeUser'
-        end
-      end
     end
 
     describe 'read operations' do
@@ -414,6 +413,16 @@ RSpec.describe 'DuckLake Integration' do
 
   describe 'query operations' do
     let(:temp_dir) { Dir.mktmpdir('ducklake_query_test') }
+    let(:user_class) do
+      Class.new(ActiveRecord::Base) do
+        self.table_name = 'query_users'
+        self.primary_key = 'id'
+
+        def self.name
+          'QueryUser'
+        end
+      end
+    end
 
     before do
       FileUtils.mkdir_p(File.join(temp_dir, 'data'))
@@ -431,6 +440,13 @@ RSpec.describe 'DuckLake Integration' do
           updated_at TIMESTAMP
         )
       SQL
+
+      # Create test data using ActiveRecord
+      user_class.create!(id: 1, name: 'Alice', age: 25, department: 'Engineering', active: true)
+      user_class.create!(id: 2, name: 'Bob', age: 30, department: 'Engineering', active: true)
+      user_class.create!(id: 3, name: 'Charlie', age: 35, department: 'Sales', active: false)
+      user_class.create!(id: 4, name: 'Diana', age: 28, department: 'Sales', active: true)
+      user_class.create!(id: 5, name: 'Eve', age: 32, department: 'Marketing', active: true)
     end
 
     after do
@@ -441,26 +457,6 @@ RSpec.describe 'DuckLake Integration' do
       end
       ActiveRecord::Base.remove_connection if ActiveRecord::Base.connected?
       FileUtils.rm_rf(temp_dir)
-    end
-
-    let(:user_class) do
-      Class.new(ActiveRecord::Base) do
-        self.table_name = 'query_users'
-        self.primary_key = 'id'
-
-        def self.name
-          'QueryUser'
-        end
-      end
-    end
-
-    before do
-      # Create test data using ActiveRecord
-      user_class.create!(id: 1, name: 'Alice', age: 25, department: 'Engineering', active: true)
-      user_class.create!(id: 2, name: 'Bob', age: 30, department: 'Engineering', active: true)
-      user_class.create!(id: 3, name: 'Charlie', age: 35, department: 'Sales', active: false)
-      user_class.create!(id: 4, name: 'Diana', age: 28, department: 'Sales', active: true)
-      user_class.create!(id: 5, name: 'Eve', age: 32, department: 'Marketing', active: true)
     end
 
     describe 'WHERE clauses' do
@@ -629,7 +625,7 @@ RSpec.describe 'DuckLake Integration' do
     it 'persists data in Parquet files across sessions' do
       # Session 1: Create data
       ActiveRecord::Base.establish_connection(ducklake_config(temp_dir))
-      ActiveRecord::Base.connection.execute("CREATE TABLE persist_test (id INTEGER, message VARCHAR)")
+      ActiveRecord::Base.connection.execute('CREATE TABLE persist_test (id INTEGER, message VARCHAR)')
       ActiveRecord::Base.connection.execute("INSERT INTO persist_test VALUES (1, 'Hello from session 1')")
       ActiveRecord::Base.connection.execute("INSERT INTO persist_test VALUES (2, 'Second message')")
       ActiveRecord::Base.remove_connection
@@ -638,19 +634,19 @@ RSpec.describe 'DuckLake Integration' do
       ActiveRecord::Base.establish_connection(ducklake_config(temp_dir))
 
       # Use raw SQL to verify persistence (avoids ActiveRecord model issues)
-      result1 = ActiveRecord::Base.connection.execute("SELECT message FROM persist_test WHERE id = 1")
-      result2 = ActiveRecord::Base.connection.execute("SELECT message FROM persist_test WHERE id = 2")
+      result1 = ActiveRecord::Base.connection.execute('SELECT message FROM persist_test WHERE id = 1')
+      result2 = ActiveRecord::Base.connection.execute('SELECT message FROM persist_test WHERE id = 2')
 
       expect(result1.first.first).to eq('Hello from session 1')
       expect(result2.first.first).to eq('Second message')
 
-      count_result = ActiveRecord::Base.connection.execute("SELECT COUNT(*) FROM persist_test")
+      count_result = ActiveRecord::Base.connection.execute('SELECT COUNT(*) FROM persist_test')
       expect(count_result.first.first).to eq(2)
     end
 
     it 'verifies data files exist in DATA_PATH' do
       ActiveRecord::Base.establish_connection(ducklake_config(temp_dir))
-      ActiveRecord::Base.connection.execute("CREATE TABLE file_test (id INTEGER, data VARCHAR)")
+      ActiveRecord::Base.connection.execute('CREATE TABLE file_test (id INTEGER, data VARCHAR)')
 
       # Insert data to trigger file creation
       ActiveRecord::Base.connection.execute("INSERT INTO file_test VALUES (1, 'test data')")
@@ -952,7 +948,7 @@ RSpec.describe 'DuckLake Integration' do
     end
   end
 
-  # Note: SQL injection prevention tests for schema operations are covered in:
+  # NOTE: SQL injection prevention tests for schema operations are covered in:
   # - quoting_spec.rb for quote/quote_column_name/quote_table_name
   # - The enum and struct column tests in the ducklake_spec.rb "schema operations" section
   # DuckLake doesn't support ENUM types, so we can't test enum escaping in DuckLake context.

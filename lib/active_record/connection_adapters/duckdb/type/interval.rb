@@ -34,8 +34,6 @@ module ActiveRecord
               value
             when ::String
               parse_interval_string(value)
-            else
-              nil
             end
           end
 
@@ -58,8 +56,6 @@ module ActiveRecord
             when ::Hash
               # Allow hash like { hours: 2, minutes: 30 }
               hash_to_duration(value)
-            else
-              nil
             end
           end
 
@@ -76,8 +72,6 @@ module ActiveRecord
               duration_to_interval_string(ActiveSupport::Duration.build(value))
             when ::String
               value
-            else
-              nil
             end
           end
 
@@ -102,12 +96,12 @@ module ActiveRecord
 
               parts << hours.to_i.hours if hours >= 1
               parts << minutes.to_i.minutes if minutes >= 1
-              parts << seconds.seconds if seconds > 0
+              parts << seconds.seconds if seconds.positive?
             end
 
             return 0.seconds if parts.empty?
 
-            parts.reduce(:+)
+            parts.sum
           end
 
           # Convert ActiveSupport::Duration to DuckDB interval string
@@ -116,42 +110,28 @@ module ActiveRecord
             remaining = duration.in_seconds
 
             # Extract components
-            if duration.parts[:years]
-              parts << "#{duration.parts[:years]} years"
-            end
+            parts << "#{duration.parts[:years]} years" if duration.parts[:years]
 
-            if duration.parts[:months]
-              parts << "#{duration.parts[:months]} months"
-            end
+            parts << "#{duration.parts[:months]} months" if duration.parts[:months]
 
-            if duration.parts[:weeks]
-              parts << "#{duration.parts[:weeks]} weeks"
-            end
+            parts << "#{duration.parts[:weeks]} weeks" if duration.parts[:weeks]
 
-            if duration.parts[:days]
-              parts << "#{duration.parts[:days]} days"
-            end
+            parts << "#{duration.parts[:days]} days" if duration.parts[:days]
 
-            if duration.parts[:hours]
-              parts << "#{duration.parts[:hours]} hours"
-            end
+            parts << "#{duration.parts[:hours]} hours" if duration.parts[:hours]
 
-            if duration.parts[:minutes]
-              parts << "#{duration.parts[:minutes]} minutes"
-            end
+            parts << "#{duration.parts[:minutes]} minutes" if duration.parts[:minutes]
 
-            if duration.parts[:seconds]
-              parts << "#{duration.parts[:seconds]} seconds"
-            end
+            parts << "#{duration.parts[:seconds]} seconds" if duration.parts[:seconds]
 
             # If no parts but has value, convert from total seconds
-            if parts.empty? && remaining > 0
+            if parts.empty? && remaining.positive?
               hours, remainder = remaining.divmod(3600)
               minutes, seconds = remainder.divmod(60)
 
               parts << "#{hours.to_i} hours" if hours >= 1
               parts << "#{minutes.to_i} minutes" if minutes >= 1
-              parts << "#{seconds} seconds" if seconds > 0
+              parts << "#{seconds} seconds" if seconds.positive?
             end
 
             parts.empty? ? '0 seconds' : parts.join(' ')
@@ -174,18 +154,18 @@ module ActiveRecord
               parts << amount.to_i.public_send(unit.downcase.pluralize)
             end
 
-            parts.empty? ? nil : parts.reduce(:+)
+            parts.empty? ? nil : parts.sum
           end
 
           # Convert hash to Duration
           def hash_to_duration(hash)
             parts = []
             hash.each do |unit, amount|
-              next if amount.nil? || amount == 0
+              next if amount.nil? || amount.zero?
 
               parts << amount.public_send(unit.to_s.singularize.pluralize)
             end
-            parts.empty? ? 0.seconds : parts.reduce(:+)
+            parts.empty? ? 0.seconds : parts.sum
           end
         end
       end

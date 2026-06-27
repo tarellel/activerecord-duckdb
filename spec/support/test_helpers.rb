@@ -290,30 +290,22 @@ module TestHelpers
     connection = ActiveRecord::Base.connection
     columns = connection.columns(table_name)
 
-    puts "\n=== Table: #{table_name} ==="
     columns.each do |column|
-      puts "#{column.name}: #{column.sql_type} (#{column.type}) - null: #{column.null}, default: #{column.default}"
     end
-    puts "========================\n"
   end
 
   def debug_query_result(sql)
     result = execute_sql(sql)
-    puts "\n=== Query: #{sql} ==="
-    puts "Columns: #{result.columns.join(", ")}"
+
     result.rows.each_with_index do |row, index|
-      puts "Row #{index}: #{row.join(", ")}"
     end
-    puts "========================\n"
   end
 
   def debug_indexes(table_name)
     indexes = ActiveRecord::Base.connection.indexes(table_name)
-    puts "\n=== Indexes for #{table_name} ==="
+
     indexes.each do |index|
-      puts "#{index.name}: #{index.columns.join(", ")} (unique: #{index.unique})"
     end
-    puts "========================\n"
   end
 
   def debug_sequences
@@ -321,9 +313,8 @@ module TestHelpers
     return unless adapter.respond_to?(:sequences)
 
     sequences = adapter.sequences
-    puts "\n=== Sequences ==="
-    sequences.each { |seq| puts seq }
-    puts "========================\n"
+
+    sequences.each { |seq| }
   end
 
   # Rails environment helpers

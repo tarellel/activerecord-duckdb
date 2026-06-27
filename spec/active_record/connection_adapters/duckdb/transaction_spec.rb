@@ -14,7 +14,11 @@ RSpec.describe 'Transactions and Savepoints' do
     end
 
     after do
-      connection.execute('DROP TABLE IF EXISTS tx_test') rescue nil
+      begin
+        connection.execute('DROP TABLE IF EXISTS tx_test')
+      rescue StandardError
+        nil
+      end
       ActiveRecord::Base.remove_connection if ActiveRecord::Base.connected?
     end
 

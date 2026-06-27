@@ -238,6 +238,9 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
     # This verifies the full stack: create_table -> column_definitions -> parse_type_info -> Column
 
     let(:config) { { adapter: 'duckdb', database: ':memory:' } }
+    let(:connection) { ActiveRecord::Base.connection }
+    let(:columns) { connection.columns(:column_reflection_test) }
+    let(:columns_by_name) { columns.index_by(&:name) }
 
     before do
       ActiveRecord::Base.establish_connection(config)
@@ -273,10 +276,6 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
       ActiveRecord::Base.connection.drop_table(:column_reflection_test, if_exists: true)
       ActiveRecord::Base.remove_connection
     end
-
-    let(:connection) { ActiveRecord::Base.connection }
-    let(:columns) { connection.columns(:column_reflection_test) }
-    let(:columns_by_name) { columns.index_by(&:name) }
 
     # Verify SQL types are preserved correctly after schema reflection
     {

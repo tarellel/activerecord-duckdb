@@ -68,9 +68,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Type::Interval do
       # Create a mock DuckDB::Interval
       interval = DuckDB::Interval.new
       # DuckDB::Interval has interval_months, interval_days, interval_micros
-      allow(interval).to receive(:interval_months).and_return(0)
-      allow(interval).to receive(:interval_days).and_return(1)
-      allow(interval).to receive(:interval_micros).and_return(3600_000_000) # 1 hour
+      allow(interval).to receive_messages(interval_months: 0, interval_days: 1, interval_micros: 3_600_000_000) # 1 hour
 
       result = type.deserialize(interval)
       expect(result).to be_a(ActiveSupport::Duration)

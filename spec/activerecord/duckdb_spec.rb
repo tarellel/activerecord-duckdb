@@ -4,7 +4,7 @@ require 'spec_helper'
 require 'tmpdir'
 require 'securerandom'
 
-RSpec.describe 'ActiveRecord::DuckDB Integration' do
+RSpec.describe Activerecord::Duckdb do
   describe 'adapter registration and loading' do
     it 'loads the gem without errors' do
       expect { require 'activerecord-duckdb' }.not_to raise_error

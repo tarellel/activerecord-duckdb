@@ -20,9 +20,9 @@ RSpec.shared_examples 'correct UTC timestamp handling' do
     retrieved_time = result.rows.first.first
 
     expect(retrieved_time).to be_a(Time)
-    expect(retrieved_time.utc?).to eq(true), "TIMESTAMP should be normalized to UTC"
+    expect(retrieved_time.utc?).to be(true), 'TIMESTAMP should be normalized to UTC'
     expect(retrieved_time.to_i).to eq(utc_time.to_i),
-      "Timestamp mismatch: expected #{utc_time.to_i}, got #{retrieved_time.to_i}"
+                                   "Timestamp mismatch: expected #{utc_time.to_i}, got #{retrieved_time.to_i}"
   end
 
   it 'preserves TIMESTAMPTZ with zero UTC offset' do
@@ -37,7 +37,7 @@ RSpec.shared_examples 'correct UTC timestamp handling' do
     retrieved_time = result.rows.first.first
 
     expect(retrieved_time).to be_a(Time)
-    expect(retrieved_time.utc_offset).to eq(0), "TIMESTAMPTZ should have zero UTC offset"
+    expect(retrieved_time.utc_offset).to eq(0), 'TIMESTAMPTZ should have zero UTC offset'
     expect(retrieved_time.hour).to eq(12)
   end
 
@@ -56,18 +56,16 @@ RSpec.shared_examples 'correct UTC timestamp handling' do
     test_times.each_with_index do |original_time, idx|
       ts_str = original_time.strftime('%Y-%m-%d %H:%M:%S')
       connection.execute("INSERT INTO #{table_name} VALUES (#{idx}, '#{ts_str}', '#{ts_str}+00')")
-    end
 
-    test_times.each_with_index do |original_time, idx|
       result = connection.send(:internal_exec_query, "SELECT ts, tstz FROM #{table_name} WHERE id = #{idx}")
       row = result.rows.first
       ts_value = row[0]
       tstz_value = row[1]
 
       expect(ts_value.to_i).to eq(original_time.to_i),
-        "TIMESTAMP round-trip failed for #{original_time}"
+                               "TIMESTAMP round-trip failed for #{original_time}"
       expect(tstz_value.to_i).to eq(original_time.to_i),
-        "TIMESTAMPTZ round-trip failed for #{original_time}"
+                                 "TIMESTAMPTZ round-trip failed for #{original_time}"
     end
   end
 end
@@ -89,7 +87,7 @@ RSpec.shared_examples 'correct local timestamp handling' do
 
     expect(retrieved_time).to be_a(Time)
     # When default_timezone is :local, timestamps should be in local time
-    expect(retrieved_time.utc?).to eq(false), "TIMESTAMP should be in local time, not UTC"
+    expect(retrieved_time.utc?).to be(false), 'TIMESTAMP should be in local time, not UTC'
     expect(retrieved_time.hour).to eq(12)
     expect(retrieved_time.min).to eq(0)
   end
@@ -168,7 +166,7 @@ RSpec.describe 'Timestamp timezone handling' do
 
           # Critical: The timestamp should be in UTC, not local time
           # This is the bug - duckdb gem parses as local time, introducing an offset
-          expect(retrieved_time.utc?).to eq(true), "Expected timestamp to be in UTC, but got #{retrieved_time.zone}"
+          expect(retrieved_time.utc?).to be(true), "Expected timestamp to be in UTC, but got #{retrieved_time.zone}"
           expect(retrieved_time).to eq(utc_time)
         end
       end
@@ -207,8 +205,8 @@ RSpec.describe 'Timestamp timezone handling' do
             retrieved_time = record.recorded_at
 
             expect(retrieved_time.to_i).to eq(original_time.to_i),
-              "Timestamp mismatch for #{original_time}: expected epoch #{original_time.to_i}, got #{retrieved_time.to_i} " \
-              "(difference: #{retrieved_time.to_i - original_time.to_i} seconds)"
+                                           "Timestamp mismatch for #{original_time}: expected epoch #{original_time.to_i}, got #{retrieved_time.to_i} " \
+                                           "(difference: #{retrieved_time.to_i - original_time.to_i} seconds)"
           end
         end
       end
@@ -230,8 +228,8 @@ RSpec.describe 'Timestamp timezone handling' do
 
           # Should match the UTC equivalent
           expect(retrieved_time.to_i).to eq(utc_equivalent.to_i),
-            "Expected #{utc_equivalent} (epoch: #{utc_equivalent.to_i}), " \
-            "got #{retrieved_time} (epoch: #{retrieved_time.to_i})"
+                                         "Expected #{utc_equivalent} (epoch: #{utc_equivalent.to_i}), " \
+                                         "got #{retrieved_time} (epoch: #{retrieved_time.to_i})"
         end
       end
     end
@@ -252,9 +250,9 @@ RSpec.describe 'Timestamp timezone handling' do
         if raw_timestamp.is_a?(Time)
           # This is the core issue: is the time interpreted as UTC or local?
           # The string '2025-01-15 12:00:00' should be UTC since that's what Rails stores
-          expect(raw_timestamp.hour).to eq(12), 
-            "Expected hour to be 12, got #{raw_timestamp.hour}. " \
-            "This indicates the timestamp is being interpreted in the wrong timezone."
+          expect(raw_timestamp.hour).to eq(12),
+                                        "Expected hour to be 12, got #{raw_timestamp.hour}. " \
+                                        'This indicates the timestamp is being interpreted in the wrong timezone.'
         end
 
         connection.execute('DROP TABLE raw_timestamp_test')
@@ -267,14 +265,12 @@ RSpec.describe 'Timestamp timezone handling' do
         # Skip if already running in UTC
         local_offset = Time.now.utc_offset
 
-        if local_offset == 0
-          skip 'Running in UTC timezone - offset bug not demonstrable'
-        end
+        skip 'Running in UTC timezone - offset bug not demonstrable' if local_offset == 0
 
         with_test_model(:timestamp_tests, table_definition: ->(t) { t.datetime :recorded_at }) do |model|
           # Store a UTC time
           utc_time = Time.utc(2025, 1, 15, 12, 0, 0)
-          
+
           record = model.create!(recorded_at: utc_time)
           record.reload
 
@@ -283,34 +279,27 @@ RSpec.describe 'Timestamp timezone handling' do
           # Calculate what the bug would produce:
           # If duckdb parses "2025-01-15 12:00:00" as local time instead of UTC,
           # converting that local time back to UTC would add the local offset
-          buggy_time_epoch = utc_time.to_i + local_offset
-          
+          # buggy_time_epoch = utc_time.to_i + local_offset
           # Check if we have the bug
-          has_bug = (retrieved_time.to_i == buggy_time_epoch)
-          
-          if has_bug
-            puts "\n⚠️  TIMEZONE BUG DETECTED!"
-            puts "   Original UTC time: #{utc_time} (epoch: #{utc_time.to_i})"
-            puts "   Retrieved time:    #{retrieved_time} (epoch: #{retrieved_time.to_i})"
-            puts "   Local offset:      #{local_offset} seconds (#{local_offset / 3600.0} hours)"
-            puts "   Difference:        #{retrieved_time.to_i - utc_time.to_i} seconds"
-          end
+          # has_bug = (retrieved_time.to_i == buggy_time_epoch)
+          # if has_bug
+          # end
 
           # This assertion will fail if the bug exists
           expect(retrieved_time.to_i).to eq(utc_time.to_i),
-            "Timestamp offset bug detected! " \
-            "Expected #{utc_time.to_i}, got #{retrieved_time.to_i}. " \
-            "Difference: #{retrieved_time.to_i - utc_time.to_i} seconds " \
-            "(local offset is #{local_offset} seconds)"
+                                         'Timestamp offset bug detected! ' \
+                                         "Expected #{utc_time.to_i}, got #{retrieved_time.to_i}. " \
+                                         "Difference: #{retrieved_time.to_i - utc_time.to_i} seconds " \
+                                         "(local offset is #{local_offset} seconds)"
         end
       end
     end
 
-    context 'timestamps column (created_at, updated_at)' do
+    context 'when should update timestamps column (created_at, updated_at)' do
       it 'correctly handles Rails timestamps columns' do
-        with_test_model(:timestamp_tests, table_definition: ->(t) { 
+        with_test_model(:timestamp_tests, table_definition: lambda { |t|
           t.string :name
-          t.timestamps 
+          t.timestamps
         }) do |model|
           # Freeze time for predictable testing
           frozen_time = Time.utc(2025, 1, 15, 12, 0, 0)
@@ -319,6 +308,7 @@ RSpec.describe 'Timestamp timezone handling' do
           # Use travel_to if available, otherwise just test what we can
           if defined?(ActiveSupport::Testing::TimeHelpers)
             extend ActiveSupport::Testing::TimeHelpers
+
             travel_to(frozen_time) do
               record = model.create!(name: 'test')
             end
@@ -341,17 +331,17 @@ RSpec.describe 'Timestamp timezone handling' do
       end
     end
 
-    context 'TIMESTAMP and TIMESTAMPTZ with plain DuckDB' do
+    context 'when TIMESTAMP and TIMESTAMPTZ with plain DuckDB' do
       include_context 'with Europe/Berlin timezone'
 
       # Setup for plain DuckDB tables (no teardown needed - in-memory DB is discarded)
       let(:setup_table) do
-        ->(connection, table_name, columns) {
+        lambda { |connection, table_name, columns|
           connection.execute("CREATE TABLE #{table_name} (#{columns})")
         }
       end
 
-      include_examples 'correct UTC timestamp handling'
+      it_behaves_like 'correct UTC timestamp handling'
 
       it 'preserves TIMESTAMPTZ timezone semantics for different offsets' do
         connection = ActiveRecord::Base.connection
@@ -362,16 +352,14 @@ RSpec.describe 'Timestamp timezone handling' do
         test_cases = [
           { offset: '+00', expected_utc_hour: 12 },
           { offset: '+01', expected_utc_hour: 11 }, # 12:00+01 = 11:00 UTC
-          { offset: '-05', expected_utc_hour: 17 }, # 12:00-05 = 17:00 UTC
+          { offset: '-05', expected_utc_hour: 17 } # 12:00-05 = 17:00 UTC
         ]
 
         test_cases.each_with_index do |test_case, idx|
           connection.execute(
             "INSERT INTO timestamptz_offset_test VALUES (#{idx}, '2025-01-15 12:00:00#{test_case[:offset]}')"
           )
-        end
 
-        test_cases.each_with_index do |test_case, idx|
           result = connection.send(
             :internal_exec_query,
             "SELECT tstz FROM timestamptz_offset_test WHERE id = #{idx}"
@@ -380,8 +368,8 @@ RSpec.describe 'Timestamp timezone handling' do
 
           expect(tstz_value).to be_a(Time)
           expect(tstz_value.hour).to eq(test_case[:expected_utc_hour]),
-            "TIMESTAMPTZ with offset #{test_case[:offset]} should have UTC hour #{test_case[:expected_utc_hour]}, " \
-            "got #{tstz_value.hour}"
+                                     "TIMESTAMPTZ with offset #{test_case[:offset]} should have UTC hour #{test_case[:expected_utc_hour]}, " \
+                                     "got #{tstz_value.hour}"
         end
       end
     end
@@ -398,7 +386,7 @@ RSpec.describe 'Timestamp timezone handling' do
 
     # Setup for DuckLake tables
     let(:setup_table) do
-      ->(connection, table_name, columns) {
+      lambda { |connection, table_name, columns|
         skip 'DuckLake extension not available' unless connection.ducklake_extension_available?
 
         data_path = File.join('tmp', "#{ducklake_db_name}_data_#{Process.pid}")
@@ -421,7 +409,7 @@ RSpec.describe 'Timestamp timezone handling' do
     # No per-test cleanup needed - connection close releases attached databases
     # Suite-level cleanup in spec_helper removes tmp files after all tests complete
 
-    include_examples 'correct UTC timestamp handling'
+    it_behaves_like 'correct UTC timestamp handling'
   end
 
   describe 'with ActiveRecord.default_timezone = :local' do
@@ -441,11 +429,11 @@ RSpec.describe 'Timestamp timezone handling' do
 
     # Setup for plain DuckDB tables
     let(:setup_table) do
-      ->(connection, table_name, columns) {
+      lambda { |connection, table_name, columns|
         connection.execute("CREATE TABLE #{table_name} (#{columns})")
       }
     end
 
-    include_examples 'correct local timestamp handling'
+    it_behaves_like 'correct local timestamp handling'
   end
 end

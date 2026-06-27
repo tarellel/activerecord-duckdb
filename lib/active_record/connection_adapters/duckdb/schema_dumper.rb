@@ -7,6 +7,9 @@ module ActiveRecord
       # Extends Rails' ConnectionAdapters::SchemaDumper to handle DuckDB-specific
       # column types, constraints, and DuckLake features like partitioning
       class SchemaDumper < ConnectionAdapters::SchemaDumper # :nodoc:
+        # Valid DuckLake options that can be set via set_option
+        SETTABLE_DUCKLAKE_OPTIONS = %w[parquet_version parquet_compression].freeze
+
         # Override table dumping to include DuckLake-specific features
         # @param table [String] The table name
         # @param stream [IO] The output stream
@@ -46,9 +49,6 @@ module ActiveRecord
           dump_ducklake_options(stream)
         end
 
-        # Valid DuckLake options that can be set via set_option
-        SETTABLE_DUCKLAKE_OPTIONS = %w[parquet_version parquet_compression].freeze
-
         # Dumps DuckLake options (parquet_version, parquet_compression, etc.)
         # @param stream [IO] The output stream
         # @return [void]
@@ -59,7 +59,7 @@ module ActiveRecord
           return if options.nil? || options.empty?
 
           # Filter to only include settable options (not metadata like 'encrypted')
-          settable_options = options.select { |name, _| SETTABLE_DUCKLAKE_OPTIONS.include?(name) }
+          settable_options = options.slice(*SETTABLE_DUCKLAKE_OPTIONS)
           return if settable_options.empty?
 
           settable_options.sort.each do |name, value|
@@ -79,7 +79,7 @@ module ActiveRecord
           return if expressions.nil? || expressions.empty?
 
           # Format the expressions array as Ruby code
-          expressions_code = expressions.map { |e| e.inspect }.join(', ')
+          expressions_code = expressions.map(&:inspect).join(', ')
           stream.puts "  set_partitioned_by #{table_name.inspect}, [#{expressions_code}]"
         end
 

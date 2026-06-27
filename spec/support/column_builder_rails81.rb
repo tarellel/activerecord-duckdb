@@ -11,8 +11,8 @@ module ColumnBuilderRails81
     end
   end
 
-  def build_column(name, default, metadata, null = true, **options)
+  def build_column(name, default, metadata, null = true, **)
     cast_type = mock_cast_type
-    ActiveRecord::ConnectionAdapters::Duckdb::Column.new(name, cast_type, default, metadata, null, **options)
+    ActiveRecord::ConnectionAdapters::Duckdb::Column.new(name, cast_type, default, metadata, null, **)
   end
 end

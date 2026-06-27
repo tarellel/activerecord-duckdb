@@ -9,7 +9,7 @@
 module DuckDBConverterTimestampMonkeyPatch
   # Version range verified by bin/verify_timestamp_patch
   TESTED_VERSION_MIN = '1.0.0.0'
-  TESTED_VERSION_MAX = '1.4.3.0'
+  TESTED_VERSION_MAX = '1.5.4.0'
 
   EXPECTED_METHODS = {
     _to_time: { arity: 7 },
@@ -28,7 +28,7 @@ module DuckDBConverterTimestampMonkeyPatch
         version = Gem.loaded_specs['duckdb']&.version
         puts "WARNING: duckdb gem version #{version} is outside tested range " \
              "(#{TESTED_VERSION_MIN} - #{TESTED_VERSION_MAX}). " \
-             "Please run bin/verify_timestamp_patch and update the range if compatible."
+             'Please run bin/verify_timestamp_patch and update the range if compatible.'
       end
 
       const.singleton_class.prepend(ClassMethods)
@@ -39,7 +39,7 @@ module DuckDBConverterTimestampMonkeyPatch
     def find_const
       Kernel.const_get('DuckDB::Converter')
     rescue NameError
-      raise "Could not find DuckDB::Converter when applying timestamp patch. Please investigate."
+      raise 'Could not find DuckDB::Converter when applying timestamp patch. Please investigate.'
     end
 
     def verify_methods!(const)
@@ -47,7 +47,7 @@ module DuckDBConverterTimestampMonkeyPatch
         mtd = const.method(method_name)
         unless mtd && mtd.arity == expectations[:arity]
           raise "Could not find method #{method_name} with arity #{expectations[:arity]} " \
-                "when patching DuckDB::Converter. Please investigate."
+                'when patching DuckDB::Converter. Please investigate.'
         end
       rescue NameError
         raise "Could not find method #{method_name} when patching DuckDB::Converter. Please investigate."

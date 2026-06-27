@@ -157,11 +157,11 @@ module ActiveRecord
         #   set_partitioned_by(:datapoints, ['year(created_at)', 'month(created_at)', 'day(created_at)'])
         # @see https://ducklake.select/docs/stable/sql/statements/alter_table.html
         def set_partitioned_by(table_name, expressions)
-          sql = "ALTER TABLE #{quote_table_name(table_name)} SET PARTITIONED BY (#{expressions.join(', ')})"
+          sql = "ALTER TABLE #{quote_table_name(table_name)} SET PARTITIONED BY (#{expressions.join(", ")})"
           execute(sql, 'Set Partitioned By')
         end
 
-        # Note: DuckLake does not support removing partitioning after it has been set.
+        # NOTE: DuckLake does not support removing partitioning after it has been set.
         # Partitioning is a one-way operation. To change partitioning, you must recreate the table.
 
         # Returns the partition expressions for a DuckLake table
@@ -210,7 +210,7 @@ module ActiveRecord
         def ducklake_metadata_schema
           # Don't memoize - current_database can change after USE DATABASE
           # DuckLake metadata is stored in __ducklake_metadata_<database_name>
-          result = execute("SELECT current_database()", 'Get Current Database')
+          result = execute('SELECT current_database()', 'Get Current Database')
           db_name = result.first&.first
           return nil if db_name.nil? || db_name.empty?
 
@@ -230,11 +230,11 @@ module ActiveRecord
         #   set_ducklake_option('parquet_compression', 'zstd', :events)
         def set_ducklake_option(option_name, value, table_name = nil)
           formatted_value = value.is_a?(Integer) ? value.to_s : quote(value)
-          if table_name
-            sql = "CALL set_option(#{quote(option_name)}, #{formatted_value}, #{quote(table_name.to_s)})"
-          else
-            sql = "CALL set_option(#{quote(option_name)}, #{formatted_value})"
-          end
+          sql = if table_name
+                  "CALL set_option(#{quote(option_name)}, #{formatted_value}, #{quote(table_name.to_s)})"
+                else
+                  "CALL set_option(#{quote(option_name)}, #{formatted_value})"
+                end
           execute(sql, 'Set DuckLake Option')
         end
 
@@ -565,7 +565,7 @@ module ActiveRecord
         # @return [Array<Object, String>] [default_value, default_function]
         def parse_column_default(table_name, column_name, column_default, formatted_type, pk)
           # Integer primary key named 'id' - assume sequence exists
-          if pk && pk.in?([true, 1]) && formatted_type.upcase.in?(%w[INTEGER BIGINT]) && column_name == 'id'
+          if pk&.in?([true, 1]) && formatted_type.upcase.in?(%w[INTEGER BIGINT]) && column_name == 'id'
             # Build the sequence name and quote it properly for the nextval expression
             seq_name = "#{table_name}_#{column_name}_seq"
             [nil, "nextval(#{quote(seq_name)})"]
@@ -690,11 +690,9 @@ module ActiveRecord
             precision, scale = ::Regexp.last_match(2)&.to_i, ::Regexp.last_match(3)&.to_i
             [:integer, 4, precision, scale]
           # BIGINT: 8 bytes (-9,223,372,036,854,775,808 to 9,223,372,036,854,775,807)
-          when /^BIGINT/i
-            [:bigint, 8, nil, nil]
           # HUGEINT: 16 bytes - map to bigint with limit 8 for Rails compatibility
           # Note: Rails doesn't support 16-byte integers natively, values may overflow
-          when /^HUGEINT/i
+          when /^BIGINT/i, /^HUGEINT/i
             [:bigint, 8, nil, nil]
           # DuckDB-specific signed integer types - use specific type symbols for schema dumping
           when /^SMALLINT/i
@@ -704,8 +702,6 @@ module ActiveRecord
           # DuckDB-specific unsigned integer types - use specific type symbols for schema dumping
           when /^UBIGINT/i
             [:ubigint, 8, nil, nil]
-          when /^UHUGEINT/i
-            [:uhugeint, nil, nil, nil]
           when /^UINTEGER/i
             [:uinteger, 4, nil, nil]
           when /^USMALLINT/i
