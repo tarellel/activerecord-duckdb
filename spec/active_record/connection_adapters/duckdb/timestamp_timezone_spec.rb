@@ -234,7 +234,7 @@ RSpec.describe 'Timestamp timezone handling' do
       end
     end
 
-    context 'raw SQL timestamp handling' do
+    context 'when handling raw SQL timestamps' do
       it 'stores and retrieves timestamps via raw SQL correctly' do
         connection = ActiveRecord::Base.connection
 
@@ -259,7 +259,7 @@ RSpec.describe 'Timestamp timezone handling' do
       end
     end
 
-    context 'verifying the timezone offset bug' do
+    context 'when verifying the timezone offset bug' do
       it 'demonstrates the timezone offset issue' do
         # This test demonstrates the bug when running in a non-UTC timezone
         # Skip if already running in UTC

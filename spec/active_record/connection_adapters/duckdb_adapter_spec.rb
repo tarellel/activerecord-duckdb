@@ -32,42 +32,44 @@ RSpec.describe ActiveRecord::ConnectionAdapters::DuckdbAdapter do
 
   describe 'connection via establish_connection (Rails integration)' do
     # Define a named test model for establish_connection tests
-    class self::TestDuckdbModel < ActiveRecord::Base
-      self.abstract_class = true
+    before do
+      stub_const('TestDuckdbModel', Class.new(ActiveRecord::Base) do
+        self.abstract_class = true
+      end)
     end
 
     after do
-      self.class::TestDuckdbModel.remove_connection if self.class::TestDuckdbModel.connected?
+      TestDuckdbModel.remove_connection if TestDuckdbModel.connected?
     end
 
     it 'applies default settings when using establish_connection' do
-      self.class::TestDuckdbModel.establish_connection(
+      TestDuckdbModel.establish_connection(
         adapter: 'duckdb',
         database: ':memory:'
       )
 
-      conn = self.class::TestDuckdbModel.connection
+      conn = TestDuckdbModel.connection
       expect(query_value("SELECT value FROM duckdb_settings() WHERE name = 'threads'", connection: conn).to_i).to eq(1)
     end
 
     it 'applies custom settings when using establish_connection' do
-      self.class::TestDuckdbModel.establish_connection(
+      TestDuckdbModel.establish_connection(
         adapter: 'duckdb',
         database: ':memory:',
         settings: { threads: 8 }
       )
 
-      conn = self.class::TestDuckdbModel.connection
+      conn = TestDuckdbModel.connection
       expect(query_value("SELECT value FROM duckdb_settings() WHERE name = 'threads'", connection: conn).to_i).to eq(8)
     end
 
     it 'locks configuration when using establish_connection' do
-      self.class::TestDuckdbModel.establish_connection(
+      TestDuckdbModel.establish_connection(
         adapter: 'duckdb',
         database: ':memory:'
       )
 
-      conn = self.class::TestDuckdbModel.connection
+      conn = TestDuckdbModel.connection
       expect(query_value("SELECT value FROM duckdb_settings() WHERE name = 'lock_configuration'", connection: conn)).to eq('true')
     end
   end

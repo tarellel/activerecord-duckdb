@@ -299,7 +299,7 @@ RSpec.describe Activerecord::Duckdb do
 
     it 'handles basic database operations' do
       config_hash = { adapter: 'duckdb', database: ':memory:' }
-      db_config = double('DatabaseConfig', configuration_hash: config_hash)
+      db_config = instance_double(ActiveRecord::DatabaseConfigurations::HashConfig, configuration_hash: config_hash)
       tasks = ActiveRecord::Tasks::DuckdbDatabaseTasks.new(db_config, Dir.tmpdir)
 
       expect(tasks.charset).to eq('UTF-8')
