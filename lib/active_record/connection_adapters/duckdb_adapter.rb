@@ -4,7 +4,6 @@ require 'duckdb'
 require 'active_record'
 require 'active_record/connection_adapters/abstract_adapter'
 
-require 'active_record/connection_adapters/duckdb/timestamp_monkey_patch'
 require 'active_record/connection_adapters/duckdb/column'
 require 'active_record/connection_adapters/duckdb/type/interval'
 require 'active_record/connection_adapters/duckdb/database_limits'
@@ -396,6 +395,7 @@ module ActiveRecord
         return if configuration_locked?
 
         super
+        DuckDB.default_timezone = ActiveRecord.default_timezone
         apply_early_settings
         install_extensions
         apply_settings
