@@ -126,23 +126,24 @@ development:
   database: db/development.duckdb
   settings:
     threads: 4
-    memory_limit: '2GB'
-    max_temp_directory_size: '8GB'
+    memory_limit: "2GB"
+    max_temp_directory_size: "8GB"
 ```
 
 **Default Settings:**
 
-| Setting | Default Value | Description |
-|---------|---------------|-------------|
-| `allow_persistent_secrets` | `false` | Disable persistent secrets for security |
-| `allow_community_extensions` | `false` | Disable community extensions |
-| `autoinstall_known_extensions` | `false` | Disable auto-installing extensions |
-| `autoload_known_extensions` | `false` | Disable auto-loading extensions |
-| `threads` | `1` | Number of threads for query execution |
-| `memory_limit` | `'1GB'` | Maximum memory usage |
-| `max_temp_directory_size` | `'4GB'` | Maximum temp directory size |
+| Setting                        | Default Value | Description                             |
+| ------------------------------ | ------------- | --------------------------------------- |
+| `allow_persistent_secrets`     | `false`       | Disable persistent secrets for security |
+| `allow_community_extensions`   | `false`       | Disable community extensions            |
+| `autoinstall_known_extensions` | `false`       | Disable auto-installing extensions      |
+| `autoload_known_extensions`    | `false`       | Disable auto-loading extensions         |
+| `threads`                      | `1`           | Number of threads for query execution   |
+| `memory_limit`                 | `'1GB'`       | Maximum memory usage                    |
+| `max_temp_directory_size`      | `'4GB'`       | Maximum temp directory size             |
 
 **Notes:**
+
 - `allow_persistent_secrets` and `allow_community_extensions` are applied before loading extensions
 - `lock_configuration = true` is automatically applied at the end to lock all settings
 
@@ -180,13 +181,13 @@ development:
       key_id: AKIAIOSFODNN7EXAMPLE
       secret: wJalrXUtnFEMI/K7MDENG
       region: us-east-1
-      scope: 's3://prod-bucket'
+      scope: "s3://prod-bucket"
     my_dev_bucket:
       type: s3
       key_id: AKIAIOSFODNN7EXAMPLE2
       secret: anotherSecretKey
       region: us-west-2
-      scope: 's3://dev-bucket'
+      scope: "s3://dev-bucket"
 ```
 
 Named secrets allow multiple secrets of the same type with different scopes.
@@ -210,10 +211,10 @@ development:
       password: secret
   attachments:
     - name: pg_db
-      connection_string: 'postgres:'
+      connection_string: "postgres:"
       type: POSTGRES
     - name: ducklake
-      connection_string: 'ducklake:postgres:'
+      connection_string: "ducklake:postgres:"
       options: "DATA_PATH 's3://my-bucket', ENCRYPTED"
 ```
 
@@ -225,8 +226,8 @@ development:
   database: db/development.duckdb
   attachments:
     - name: analytics
-      connection_string: 's3://bucket/analytics.duckdb'
-  use_database: analytics  # Switch to the attached database
+      connection_string: "s3://bucket/analytics.duckdb"
+  use_database: analytics # Switch to the attached database
 ```
 
 ### Sample App setup
@@ -252,7 +253,7 @@ gem 'activerecord-duckdb'
 ```yaml
 development:
   adapter: duckdb
-  database: db/development.db
+  database: db/development.duckdb
 
 test:
   adapter: duckdb

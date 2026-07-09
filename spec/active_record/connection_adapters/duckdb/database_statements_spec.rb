@@ -37,7 +37,11 @@ RSpec.describe 'DatabaseStatements' do
   end
 
   after do
-    @connection.execute('DROP TABLE IF EXISTS statement_test') rescue nil
+    begin
+      @connection.execute('DROP TABLE IF EXISTS statement_test')
+    rescue StandardError
+      nil
+    end
     ActiveRecord::Base.remove_connection if ActiveRecord::Base.connected?
   end
 
@@ -169,19 +173,19 @@ RSpec.describe 'DatabaseStatements' do
 
   describe '#affected_rows' do
     it 'returns the number of rows changed for UPDATE' do
-      raw_result = @connection.execute("UPDATE statement_test SET age = age + 1 WHERE active = true")
+      raw_result = @connection.execute('UPDATE statement_test SET age = age + 1 WHERE active = true')
 
       expect(@connection.affected_rows(raw_result)).to eq(2)
     end
 
     it 'returns the number of rows changed for DELETE' do
-      raw_result = @connection.execute("DELETE FROM statement_test WHERE active = false")
+      raw_result = @connection.execute('DELETE FROM statement_test WHERE active = false')
 
       expect(@connection.affected_rows(raw_result)).to eq(1)
     end
 
     it 'returns 0 when no rows are affected' do
-      raw_result = @connection.execute("UPDATE statement_test SET age = 99 WHERE id = 999")
+      raw_result = @connection.execute('UPDATE statement_test SET age = 99 WHERE id = 999')
 
       expect(@connection.affected_rows(raw_result)).to eq(0)
     end
@@ -398,7 +402,7 @@ RSpec.describe 'DatabaseStatements' do
     end
 
     it 'handles NULL values' do
-      @connection.execute("INSERT INTO statement_test VALUES (100, NULL, NULL, NULL)")
+      @connection.execute('INSERT INTO statement_test VALUES (100, NULL, NULL, NULL)')
 
       result = @connection.internal_exec_query('SELECT * FROM statement_test WHERE id = 100')
 
@@ -414,9 +418,9 @@ RSpec.describe 'DatabaseStatements' do
     end
 
     it 'raises error for invalid SQL' do
-      expect {
+      expect do
         @connection.execute('INVALID SQL')
-      }.to raise_error(ActiveRecord::StatementInvalid)
+      end.to raise_error(ActiveRecord::StatementInvalid)
     end
   end
 end

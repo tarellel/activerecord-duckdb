@@ -18,14 +18,14 @@ runs:
         sudo apt-get install -y --no-install-recommends cmake git wget
 
     - name: Setup and Install DuckDB
-      uses: opt-nc/setup-duckdb-action@v1.0.13
+      uses: opt-nc/setup-duckdb-action@v1.2.10
       with:
-        version: v1.3.1
+        version: v1.5.4
 
     - name: Install DuckDB development files
       shell: sh
       run: |
-        wget https://github.com/duckdb/duckdb/releases/download/v1.3.1/libduckdb-linux-amd64.zip
+        wget https://github.com/duckdb/duckdb/releases/download/v1.5.4/libduckdb-linux-amd64.zip
         unzip libduckdb-linux-amd64.zip -d libduckdb
         sudo mv libduckdb/duckdb.* /usr/local/include/
         sudo mv libduckdb/libduckdb.so /usr/local/lib/

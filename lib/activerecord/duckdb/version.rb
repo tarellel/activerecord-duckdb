@@ -6,6 +6,6 @@ module Activerecord
   module Duckdb
     # Current version of the activerecord-duckdb gem
     # @return [String] the version string in semantic version format
-    VERSION = '0.1.0'
+    VERSION = '0.1.1'
   end
 end

@@ -4,7 +4,7 @@ require 'spec_helper'
 require 'tmpdir'
 require 'securerandom'
 
-RSpec.describe 'ActiveRecord::DuckDB Integration' do
+RSpec.describe Activerecord::Duckdb do
   describe 'adapter registration and loading' do
     it 'loads the gem without errors' do
       expect { require 'activerecord-duckdb' }.not_to raise_error
@@ -299,7 +299,7 @@ RSpec.describe 'ActiveRecord::DuckDB Integration' do
 
     it 'handles basic database operations' do
       config_hash = { adapter: 'duckdb', database: ':memory:' }
-      db_config = double('DatabaseConfig', configuration_hash: config_hash)
+      db_config = instance_double(ActiveRecord::DatabaseConfigurations::HashConfig, configuration_hash: config_hash)
       tasks = ActiveRecord::Tasks::DuckdbDatabaseTasks.new(db_config, Dir.tmpdir)
 
       expect(tasks.charset).to eq('UTF-8')

@@ -30,7 +30,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
   describe 'initialization' do
     it 'creates a column with basic attributes' do
       metadata = fresh_metadata
-      column = build_column('test_column', 'default_value', metadata, true)
+      column = build_column('test_column', 'default_value', metadata, null: true)
 
       expect(column.name).to eq('test_column')
       expect(column.default).to eq('default_value')
@@ -44,7 +44,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
         'test_column',
         nil,
         metadata,
-        false,
+        null: false,
         auto_increment: true,
         rowid: true,
         generated_type: :stored,
@@ -58,7 +58,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
 
     it 'handles nil options gracefully' do
       metadata = fresh_metadata
-      column = build_column('test_column', nil, metadata, true)
+      column = build_column('test_column', nil, metadata, null: true)
 
       expect(column.auto_increment?).to be false
       expect(column.rowid).to be_nil
@@ -69,13 +69,13 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
   describe '#has_default?' do
     it 'returns true for non-virtual columns with default' do
       metadata = fresh_metadata
-      column = build_column('test', 'default_value', metadata, true)
+      column = build_column('test', 'default_value', metadata, null: true)
       expect(column.has_default?).to be true
     end
 
     it 'returns false for non-virtual columns without default' do
       metadata = fresh_metadata
-      column = build_column('test', nil, metadata, true)
+      column = build_column('test', nil, metadata, null: true)
       expect(column.has_default?).to be false
     end
   end
@@ -83,7 +83,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
   describe '#auto_increment?' do
     it 'returns true when auto_increment is true' do
       metadata = fresh_metadata
-      column = build_column('id', nil, metadata, false, auto_increment: true)
+      column = build_column('id', nil, metadata, null: false, auto_increment: true)
       expect(column.auto_increment?).to be true
     end
   end
@@ -91,25 +91,25 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
   describe '#auto_incremented_by_db?' do
     it 'returns true when auto_increment is true' do
       metadata = fresh_metadata
-      column = build_column('id', nil, metadata, false, auto_increment: true)
+      column = build_column('id', nil, metadata, null: false, auto_increment: true)
       expect(column.auto_incremented_by_db?).to be true
     end
 
     it 'returns true when rowid is true' do
       metadata = fresh_metadata
-      column = build_column('rowid', nil, metadata, false, rowid: true)
+      column = build_column('rowid', nil, metadata, null: false, rowid: true)
       expect(column.auto_incremented_by_db?).to be true
     end
 
     it 'returns true when both are true' do
       metadata = fresh_metadata
-      column = build_column('id', nil, metadata, false, auto_increment: true, rowid: true)
+      column = build_column('id', nil, metadata, null: false, auto_increment: true, rowid: true)
       expect(column.auto_incremented_by_db?).to be true
     end
 
     it 'returns false when neither is true' do
       metadata = fresh_metadata
-      column = build_column('name', nil, metadata, false)
+      column = build_column('name', nil, metadata, null: false)
       expect(column.auto_incremented_by_db?).to be false
     end
   end
@@ -117,13 +117,13 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
   describe '#rowid' do
     it 'exposes rowid attribute when set' do
       metadata = fresh_metadata
-      column = build_column('test_rowid_true', nil, metadata, true, rowid: true)
+      column = build_column('test_rowid_true', nil, metadata, null: true, rowid: true)
       expect(column.rowid).to be true
     end
 
     it 'defaults to nil when not specified' do
       metadata = fresh_metadata
-      column = build_column('test_rowid_nil', nil, metadata, true)
+      column = build_column('test_rowid_nil', nil, metadata, null: true)
       expect(column.rowid).to be_nil
     end
   end
@@ -131,7 +131,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
   describe 'inheritance from ConnectionAdapters::Column' do
     let(:column) do
       metadata = fresh_metadata
-      build_column('test', 'default', metadata, true)
+      build_column('test', 'default', metadata, null: true)
     end
 
     it 'inherits from ConnectionAdapters::Column' do
@@ -153,7 +153,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
   describe 'real-world scenarios' do
     it 'handles sequence-based primary key columns' do
       metadata = fresh_metadata(sql_type: 'BIGINT', type: :bigint)
-      column = build_column('id', nil, metadata, false, auto_increment: true)
+      column = build_column('id', nil, metadata, null: false, auto_increment: true)
 
       expect(column.name).to eq('id')
       expect(column.type).to eq(:bigint)
@@ -165,7 +165,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
 
     it 'handles UUID primary key columns' do
       metadata = fresh_metadata(sql_type: 'UUID', type: :uuid)
-      column = build_column('id', nil, metadata, false)
+      column = build_column('id', nil, metadata, null: false)
 
       expect(column.name).to eq('id')
       expect(column.type).to eq(:uuid)
@@ -176,7 +176,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
 
     it 'handles basic columns without special features' do
       metadata = fresh_metadata
-      column = build_column('total', nil, metadata, true)
+      column = build_column('total', nil, metadata, null: true)
 
       expect(column.virtual?).to be false
       expect(column.auto_increment?).to be false
@@ -186,7 +186,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
 
     it 'handles regular columns with defaults' do
       metadata = fresh_metadata(sql_type: 'VARCHAR', type: :string)
-      column = build_column('status', 'active', metadata, true)
+      column = build_column('status', 'active', metadata, null: true)
 
       expect(column.name).to eq('status')
       expect(column.type).to eq(:string)
@@ -200,7 +200,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
   describe 'edge cases' do
     it 'handles columns with regular constraints' do
       metadata = fresh_metadata
-      column = build_column('complex', nil, metadata, false)
+      column = build_column('complex', nil, metadata, null: false)
 
       expect(column.virtual?).to be false
       expect(column.auto_increment?).to be false
@@ -212,7 +212,7 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
         'partial',
         nil,
         metadata,
-        true,
+        null: true,
         extra: 'GENERATION failed VIRTUALLY impossible'
       )
 
@@ -222,13 +222,13 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
     it 'handles unknown keyword arguments gracefully' do
       metadata = fresh_metadata
       expect do
-        build_column('test', nil, metadata, true, unknown_param: 'value')
+        build_column('test', nil, metadata, null: true, unknown_param: 'value')
       end.not_to raise_error
     end
 
     it 'handles whitespace-only extra string' do
       metadata = fresh_metadata
-      column = build_column('whitespace', nil, metadata, true, extra: '   ')
+      column = build_column('whitespace', nil, metadata, null: true, extra: '   ')
       expect(column.virtual?).to be false
     end
   end
@@ -238,6 +238,9 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
     # This verifies the full stack: create_table -> column_definitions -> parse_type_info -> Column
 
     let(:config) { { adapter: 'duckdb', database: ':memory:' } }
+    let(:connection) { ActiveRecord::Base.connection }
+    let(:columns) { connection.columns(:column_reflection_test) }
+    let(:columns_by_name) { columns.index_by(&:name) }
 
     before do
       ActiveRecord::Base.establish_connection(config)
@@ -273,10 +276,6 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::Column do
       ActiveRecord::Base.connection.drop_table(:column_reflection_test, if_exists: true)
       ActiveRecord::Base.remove_connection
     end
-
-    let(:connection) { ActiveRecord::Base.connection }
-    let(:columns) { connection.columns(:column_reflection_test) }
-    let(:columns_by_name) { columns.index_by(&:name) }
 
     # Verify SQL types are preserved correctly after schema reflection
     {

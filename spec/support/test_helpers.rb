@@ -285,47 +285,6 @@ module TestHelpers
     end
   end
 
-  # Debugging helpers
-  def debug_table_structure(table_name)
-    connection = ActiveRecord::Base.connection
-    columns = connection.columns(table_name)
-
-    puts "\n=== Table: #{table_name} ==="
-    columns.each do |column|
-      puts "#{column.name}: #{column.sql_type} (#{column.type}) - null: #{column.null}, default: #{column.default}"
-    end
-    puts "========================\n"
-  end
-
-  def debug_query_result(sql)
-    result = execute_sql(sql)
-    puts "\n=== Query: #{sql} ==="
-    puts "Columns: #{result.columns.join(", ")}"
-    result.rows.each_with_index do |row, index|
-      puts "Row #{index}: #{row.join(", ")}"
-    end
-    puts "========================\n"
-  end
-
-  def debug_indexes(table_name)
-    indexes = ActiveRecord::Base.connection.indexes(table_name)
-    puts "\n=== Indexes for #{table_name} ==="
-    indexes.each do |index|
-      puts "#{index.name}: #{index.columns.join(", ")} (unique: #{index.unique})"
-    end
-    puts "========================\n"
-  end
-
-  def debug_sequences
-    adapter = ActiveRecord::Base.connection
-    return unless adapter.respond_to?(:sequences)
-
-    sequences = adapter.sequences
-    puts "\n=== Sequences ==="
-    sequences.each { |seq| puts seq }
-    puts "========================\n"
-  end
-
   # Rails environment helpers
   def with_rails_env(env = 'test')
     original_env = ENV.fetch('RAILS_ENV', nil)
@@ -467,17 +426,6 @@ def expect_invalid_record(record, expected_errors = {})
 end
 
 # Database state helpers
-def wait_for_connection(timeout = 5)
-  start_time = Time.current
-  loop do
-    break if ActiveRecord::Base.connected?
-    break if Time.current - start_time > timeout
-
-    sleep 0.1
-  end
-  ActiveRecord::Base.connected?
-end
-
 def count_all_records
   ActiveRecord::Base.connection.tables.sum do |table|
     count_records(table)

@@ -30,44 +30,128 @@ RSpec.describe ActiveRecord::ConnectionAdapters::DuckdbAdapter do
     end
   end
 
+  # Verifies that configure_connection syncs the duckdb gem's global
+  # DuckDB.default_timezone from ActiveRecord.default_timezone, so DuckDB parses
+  # TIMESTAMP values with the same UTC/local policy ActiveRecord expects.
+  describe 'DuckDB.default_timezone synchronization' do
+    around do |example|
+      original_duckdb_timezone = DuckDB.default_timezone
+      original_ar_timezone = ActiveRecord.default_timezone
+
+      example.run
+    ensure
+      DuckDB.default_timezone = original_duckdb_timezone
+      ActiveRecord.default_timezone = original_ar_timezone
+    end
+
+    context 'when ActiveRecord.default_timezone is :utc' do
+      before do
+        ActiveRecord.default_timezone = :utc
+        # Start from the opposite value to prove configure_connection changes it
+        DuckDB.default_timezone = :local
+      end
+
+      it 'syncs DuckDB.default_timezone to :utc on connect!' do
+        with_memory_connection do
+          expect(DuckDB.default_timezone).to eq(:utc)
+        end
+      end
+
+      it 'returns an inserted TIMESTAMP as a UTC Time when selecting' do
+        with_memory_connection do |conn|
+          conn.execute('CREATE TABLE events (id INTEGER, occurred_at TIMESTAMP)')
+          conn.execute("INSERT INTO events VALUES (1, '2025-01-15 12:00:00')")
+
+          returned = query_value('SELECT occurred_at FROM events WHERE id = 1', connection: conn)
+
+          expect(returned).to be_a(Time)
+          expect(returned).to be_utc
+          expect(returned).to eq(Time.utc(2025, 1, 15, 12, 0, 0))
+        end
+      end
+    end
+
+    context 'when ActiveRecord.default_timezone is :local' do
+      before do
+        ActiveRecord.default_timezone = :local
+        # Start from the opposite value to prove configure_connection changes it
+        DuckDB.default_timezone = :utc
+      end
+
+      it 'syncs DuckDB.default_timezone to :local on connect!' do
+        with_memory_connection do
+          expect(DuckDB.default_timezone).to eq(:local)
+        end
+      end
+
+      it 'returns an inserted TIMESTAMP as a local Time when selecting' do
+        with_memory_connection do |conn|
+          conn.execute('CREATE TABLE events (id INTEGER, occurred_at TIMESTAMP)')
+          conn.execute("INSERT INTO events VALUES (1, '2025-01-15 12:00:00')")
+
+          returned = query_value('SELECT occurred_at FROM events WHERE id = 1', connection: conn)
+
+          expect(returned).to be_a(Time)
+          expect(returned).not_to be_utc
+          expect(returned.strftime('%Y-%m-%d %H:%M:%S')).to eq('2025-01-15 12:00:00')
+        end
+      end
+    end
+
+    it 'reads ActiveRecord.default_timezone at connection time, not at load time' do
+      ActiveRecord.default_timezone = :utc
+      with_memory_connection do
+        expect(DuckDB.default_timezone).to eq(:utc)
+      end
+
+      # A change made after the adapter is loaded must be picked up by the next connection
+      ActiveRecord.default_timezone = :local
+      with_memory_connection do
+        expect(DuckDB.default_timezone).to eq(:local)
+      end
+    end
+  end
+
   describe 'connection via establish_connection (Rails integration)' do
     # Define a named test model for establish_connection tests
-    class self::TestDuckdbModel < ActiveRecord::Base
-      self.abstract_class = true
+    before do
+      stub_const('TestDuckdbModel', Class.new(ActiveRecord::Base) do
+        self.abstract_class = true
+      end)
     end
 
     after do
-      self.class::TestDuckdbModel.remove_connection if self.class::TestDuckdbModel.connected?
+      TestDuckdbModel.remove_connection if TestDuckdbModel.connected?
     end
 
     it 'applies default settings when using establish_connection' do
-      self.class::TestDuckdbModel.establish_connection(
+      TestDuckdbModel.establish_connection(
         adapter: 'duckdb',
         database: ':memory:'
       )
 
-      conn = self.class::TestDuckdbModel.connection
+      conn = TestDuckdbModel.connection
       expect(query_value("SELECT value FROM duckdb_settings() WHERE name = 'threads'", connection: conn).to_i).to eq(1)
     end
 
     it 'applies custom settings when using establish_connection' do
-      self.class::TestDuckdbModel.establish_connection(
+      TestDuckdbModel.establish_connection(
         adapter: 'duckdb',
         database: ':memory:',
         settings: { threads: 8 }
       )
 
-      conn = self.class::TestDuckdbModel.connection
+      conn = TestDuckdbModel.connection
       expect(query_value("SELECT value FROM duckdb_settings() WHERE name = 'threads'", connection: conn).to_i).to eq(8)
     end
 
     it 'locks configuration when using establish_connection' do
-      self.class::TestDuckdbModel.establish_connection(
+      TestDuckdbModel.establish_connection(
         adapter: 'duckdb',
         database: ':memory:'
       )
 
-      conn = self.class::TestDuckdbModel.connection
+      conn = TestDuckdbModel.connection
       expect(query_value("SELECT value FROM duckdb_settings() WHERE name = 'lock_configuration'", connection: conn)).to eq('true')
     end
   end

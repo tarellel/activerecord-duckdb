@@ -4,7 +4,6 @@ require 'duckdb'
 require 'active_record'
 require 'active_record/connection_adapters/abstract_adapter'
 
-require 'active_record/connection_adapters/duckdb/timestamp_monkey_patch'
 require 'active_record/connection_adapters/duckdb/column'
 require 'active_record/connection_adapters/duckdb/type/interval'
 require 'active_record/connection_adapters/duckdb/database_limits'
@@ -381,7 +380,7 @@ module ActiveRecord
         return NATIVE_DATABASE_TYPES unless ducklake?
 
         # DuckLake doesn't support PRIMARY KEY/UNIQUE constraints
-        @ducklake_database_types ||= NATIVE_DATABASE_TYPES.merge(
+        @native_database_types ||= NATIVE_DATABASE_TYPES.merge(
           primary_key: 'INTEGER'
         )
       end
@@ -396,6 +395,7 @@ module ActiveRecord
         return if configuration_locked?
 
         super
+        DuckDB.default_timezone = ActiveRecord.default_timezone
         apply_early_settings
         install_extensions
         apply_settings
@@ -655,8 +655,8 @@ module ActiveRecord
       # @return [void]
       def reconnect
         @raw_connection&.close
-        @duckdb_configured = false  # Reset so configure_connection will run on new connection
-        remove_instance_variable(:@ducklake) if defined?(@ducklake)  # Reset ducklake detection
+        @duckdb_configured = false # Reset so configure_connection will run on new connection
+        remove_instance_variable(:@ducklake) if defined?(@ducklake) # Reset ducklake detection
         connect
       end
 

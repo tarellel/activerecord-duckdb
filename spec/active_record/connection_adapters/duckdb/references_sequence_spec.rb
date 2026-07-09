@@ -326,7 +326,7 @@ RSpec.describe 'References Sequence Fix' do
 
     describe 'reset_sequence!' do
       it 'converts value to integer to prevent injection' do
-        # Note: DuckDB doesn't support ALTER SEQUENCE yet, so we just verify the SQL is built correctly
+        # NOTE: DuckDB doesn't support ALTER SEQUENCE yet, so we just verify the SQL is built correctly
         # by checking that the method doesn't raise a type error for the value parameter
         adapter.create_table(:seq_reset_test) do |t|
           t.string :name

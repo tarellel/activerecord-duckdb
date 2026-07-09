@@ -18,8 +18,8 @@ RSpec.describe 'DuckLake Migrations' do
       extensions: ['ducklake'],
       attachments: [{
         name: 'ducklake',
-        connection_string: "ducklake:#{File.join(temp_dir, 'test.ducklake')}",
-        options: "DATA_PATH '#{File.join(temp_dir, 'data')}'"
+        connection_string: "ducklake:#{File.join(temp_dir, "test.ducklake")}",
+        options: "DATA_PATH '#{File.join(temp_dir, "data")}'"
       }],
       use_database: 'ducklake'
     }
@@ -167,7 +167,7 @@ RSpec.describe 'DuckLake Migrations' do
         expect(connection.table_exists?(:events)).to be true
       end
 
-      # Note: DuckLake does not support removing partitioning after it has been set.
+      # NOTE: DuckLake does not support removing partitioning after it has been set.
       # Partitioning is a one-way operation. To change partitioning, you must recreate the table.
 
       it 'reflects partitioning in schema dumps' do
