@@ -11,6 +11,8 @@
 - Update gems versions
 - Cleanup minor deadcode and nil returns
 - Minor touchup to README.md contents
+- Add support for DuckDB ducklake (#5 - buenaventure)
+- Add support for DuckDB extensions (#5 - buenaventure)
 
 ## [0.1.0] - 2025-06-18
 
