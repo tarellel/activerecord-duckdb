@@ -240,11 +240,14 @@ embedded DuckDB act as a **client** to a remote DuckDB **server** over the `quac
 This feature is **off by default**. When the `quack:` block is absent, the adapter continues to
 use a standalone file-based or in-memory database exactly as before.
 
-On the server, start a DuckDB instance serving over quack:
+On the server, start a DuckDB instance serving over quack. You can do this in raw SQL:
 
 ```sql
-CALL quack_serve('quack:0.0.0.0:9494', token = 'super_secret');
+CALL quack_serve('quack:0.0.0.0:9494', token => 'super_secret', allow_other_hostname => true);
 ```
+
+...or use the launcher this gem provides (see [Running a quack server](#running-a-quack-server)
+below).
 
 Then point the adapter at it. The local `database:` acts as the client's control database
 (in-memory is typical); the remote server's data is reached through the attached alias:
@@ -288,6 +291,49 @@ Notes:
 - Because quack is a **core** extension, no `allow_community_extensions` relaxation is needed and
   the adapter's secure defaults remain in effect. The explicit `INSTALL` performs a one-time
   network fetch of the extension on first connection.
+
+##### Running a quack server
+
+The real value of quack is letting **multiple separate processes** (e.g. several Rails/Puma
+workers, Sidekiq, and a console) share **one writable** DuckDB database concurrently — something
+embedded/in-process DuckDB cannot do because of its single-writer file lock. To get that, run a
+**dedicated, long-lived server process** and point every app process at it as a client.
+
+This gem ships a rake task and a `QuackServer` class to launch one:
+
+```bash
+# Serve a file-backed database so its data survives restarts
+DATABASE=db/shared.duckdb BIND=quack:0.0.0.0:9494 QUACK_TOKEN=super_secret \
+  QUACK_ALLOW_OTHER_HOSTNAME=1 bundle exec rake duckdb:quack:serve
+```
+
+Environment variables: `DATABASE` (file path or `:memory:`, default `:memory:`), `BIND`
+(default `quack:localhost:9494`), `QUACK_TOKEN`, `QUACK_EXTENSIONS` (comma-separated), and
+`QUACK_ALLOW_OTHER_HOSTNAME=1` (required to bind a non-localhost address such as `0.0.0.0`).
+
+Or from Ruby:
+
+```ruby
+server = ActiveRecord::ConnectionAdapters::Duckdb::QuackServer.new(
+  database: 'db/shared.duckdb',
+  bind: 'quack:localhost:9494',
+  token: ENV['QUACK_TOKEN']
+)
+server.start # non-blocking; the listener runs in a background thread
+server.wait  # keep this process alive (Ctrl-C to stop)
+```
+
+Important:
+
+- **Run the server as its own process, not inside your Rails app's connection.** Do not try to
+  serve and connect as a client from the *same* process — beyond offering no benefit (you'd be
+  routing queries over an HTTP loopback to a database you could query directly), it is unstable
+  at process teardown. Server and clients must be **separate processes**.
+- Auth tokens must be **at least 4 characters**; `QuackServer` raises early if a shorter one is
+  given. If no token is set, the server generates one at startup and (by default) allows all
+  queries — set a token for anything beyond local experimentation.
+- When binding a public address, front the server with a TLS-terminating reverse proxy (e.g.
+  nginx) rather than exposing quack directly, as the DuckDB documentation recommends.
 
 ### Sample App setup
 

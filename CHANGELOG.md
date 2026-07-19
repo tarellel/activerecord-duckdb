@@ -1,6 +1,7 @@
 ## [Unreleased]
 
 - Add optional support for connecting to a remote DuckDB server via the quack protocol (`quack:` config block, off by default)
+- Add a quack server launcher (`QuackServer` class and `rake duckdb:quack:serve` task) so multiple processes can share one writable DuckDB database
 
 ## [0.1.1] - 2026-07-08
 

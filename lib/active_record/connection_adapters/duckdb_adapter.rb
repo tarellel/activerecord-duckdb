@@ -13,6 +13,7 @@ require 'active_record/connection_adapters/duckdb/schema_creation'
 require 'active_record/connection_adapters/duckdb/schema_statements'
 require 'active_record/connection_adapters/duckdb/schema_definitions'
 require 'active_record/connection_adapters/duckdb/schema_dumper'
+require 'active_record/connection_adapters/duckdb/quack_server'
 
 # Inspired by the SQLite adapter
 # duckdb: https://github.com/duckdb/duckdb-ruby
@@ -820,9 +821,7 @@ module ActiveRecord
         name = cfg[:as].presence || 'remote'
         raw_connection.execute('INSTALL quack')
         raw_connection.execute('LOAD quack')
-
         raw_connection.execute("CREATE SECRET (TYPE quack, TOKEN #{quote(cfg[:token])}, SCOPE #{quote(url)})") if cfg[:token].present?
-
         raw_connection.execute("ATTACH #{quote(url)} AS #{name} (TYPE quack)")
         raw_connection.execute("USE #{name}") unless cfg[:use] == false
       end
