@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- Add optional support for connecting to a remote DuckDB server via the quack protocol (`quack:` config block, off by default)
+
 ## [0.1.1] - 2026-07-08
 
 - Cleanup code so all linters pass

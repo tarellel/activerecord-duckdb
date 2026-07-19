@@ -230,6 +230,65 @@ development:
   use_database: analytics # Switch to the attached database
 ```
 
+#### Remote Server (quack protocol)
+
+DuckDB 1.5.3+ ships the [quack](https://duckdb.org/quack/) core extension, which lets an
+embedded DuckDB act as a **client** to a remote DuckDB **server** over the `quack:` protocol
+(HTTP, default port `9494`). This adapter can connect to such a server through an optional
+`quack:` configuration block.
+
+This feature is **off by default**. When the `quack:` block is absent, the adapter continues to
+use a standalone file-based or in-memory database exactly as before.
+
+On the server, start a DuckDB instance serving over quack:
+
+```sql
+CALL quack_serve('quack:0.0.0.0:9494', token = 'super_secret');
+```
+
+Then point the adapter at it. The local `database:` acts as the client's control database
+(in-memory is typical); the remote server's data is reached through the attached alias:
+
+```yaml
+production:
+  adapter: duckdb
+  database: ":memory:"                       # local client control database
+  quack:
+    url: "quack:analytics.example.com:9494"   # required: remote server URI
+    token: <%= ENV["QUACK_TOKEN"] %>          # optional: auth token
+    as: remote                                # optional: ATTACH alias (default: remote)
+    use: true                                 # optional: USE the attached db (default: true)
+```
+
+The adapter installs and loads the quack extension for you, so you do **not** need to add it to
+the `extensions:` list. Under the hood, a populated block emits (in order):
+
+```sql
+INSTALL quack;
+LOAD quack;
+CREATE SECRET (TYPE quack, TOKEN 'super_secret', SCOPE 'quack:analytics.example.com:9494'); -- only when a token is given
+ATTACH 'quack:analytics.example.com:9494' AS remote (TYPE quack);
+USE remote;                                                                                  -- unless use: false
+```
+
+Configuration options:
+
+| Option  | Required | Default  | Description                                                     |
+| ------- | -------- | -------- | --------------------------------------------------------------- |
+| `url`   | yes      | —        | Remote server URI, e.g. `"quack:host:9494"`                     |
+| `token` | no       | —        | Auth token; registered as a scoped quack `SECRET` when present  |
+| `as`    | no       | `remote` | Alias used by `ATTACH ... AS <as>`                              |
+| `use`   | no       | `true`   | Whether to `USE` the attached database after attaching          |
+
+Notes:
+
+- A `quack:` block that is empty, or whose keys are all blank, is treated as disabled (no-op).
+- A block that provides other keys but omits `url` raises an error rather than producing an
+  invalid connection.
+- Because quack is a **core** extension, no `allow_community_extensions` relaxation is needed and
+  the adapter's secure defaults remain in effect. The explicit `INSTALL` performs a one-time
+  network fetch of the extension on first connection.
+
 ### Sample App setup
 
 The following steps are required to setup a sample application using the `activerecord-duckdb` gem:

@@ -401,6 +401,7 @@ module ActiveRecord
         apply_settings
         create_secrets
         attach_databases
+        configure_quack
         use_database
         lock_configuration
       end
@@ -770,6 +771,60 @@ module ActiveRecord
 
           raw_connection.execute(sql)
         end
+      end
+
+      # Configures a remote quack (client/server) connection.
+      #
+      # quack is a DuckDB core extension (DuckDB >= 1.5.3) that lets an embedded
+      # DuckDB act as a client to a remote DuckDB server over the +quack:+ protocol.
+      # This is entirely opt-in and off by default: when no +quack:+ block is present
+      # in the database configuration, this method is a no-op and standalone/in-memory
+      # behavior is unchanged.
+      #
+      # The block is self-contained -- it installs and loads the quack extension itself,
+      # so developers do not need to add +quack+ to the +extensions:+ list separately.
+      # INSTALL is idempotent (a no-op when quack is already present) and, being an
+      # explicit install of a core extension, does not require autoinstall_known_extensions,
+      # so the adapter's secure defaults remain intact.
+      #
+      # Supported +quack:+ keys:
+      #   url:   (required) the remote server URI, e.g. "quack:host:9494"
+      #   token: (optional) auth token; registered as a scoped quack SECRET when present
+      #   as:    (optional) ATTACH alias, defaults to "remote"
+      #   use:   (optional) whether to USE the attached database, defaults to true
+      #
+      # A blank block (nil, {}, or one whose keys are all blank) is treated as disabled.
+      # A block that supplies other keys but omits +url+ is a misconfiguration and raises,
+      # rather than emitting an invalid ATTACH statement.
+      #
+      # @return [void]
+      # @raise [ArgumentError] if a non-blank quack block is missing a url
+      def configure_quack
+        cfg = @config[:quack]
+        return if cfg.blank? # no quack: key, or an empty block -> disabled
+
+        # Drop keys whose value is nil or a blank/whitespace string so valueless
+        # YAML keys don't produce `TOKEN NULL` / `ATTACH NULL`. Booleans are kept
+        # deliberately: `use: false` is meaningful and must survive (false.blank? is true).
+        cfg = cfg.transform_keys(&:to_sym).reject do |_key, value|
+          value.nil? || (value.is_a?(String) && value&.strip&.blank?)
+        end
+        return if cfg.blank? # every key was blank -> disabled
+
+        url = cfg[:url]
+        raise ArgumentError, <<~MSG if url.blank?
+          DuckDB quack configuration is missing a `url` (e.g. "quack:host:9494").
+          Provide `quack.url` or remove the `quack:` block from database.yml.
+        MSG
+
+        name = cfg[:as].presence || 'remote'
+        raw_connection.execute('INSTALL quack')
+        raw_connection.execute('LOAD quack')
+
+        raw_connection.execute("CREATE SECRET (TYPE quack, TOKEN #{quote(cfg[:token])}, SCOPE #{quote(url)})") if cfg[:token].present?
+
+        raw_connection.execute("ATTACH #{quote(url)} AS #{name} (TYPE quack)")
+        raw_connection.execute("USE #{name}") unless cfg[:use] == false
       end
 
       # Sets the active database using USE statement
