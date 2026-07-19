@@ -3,6 +3,7 @@
 - Add optional support for connecting to a remote DuckDB server via the quack protocol (`quack:` config block, off by default)
 - Add a quack server launcher (`QuackServer` class and `rake duckdb:quack:serve` task) so multiple processes can share one writable DuckDB database
 - Support ordinary integer (auto-increment) primary keys over quack: prefetch ids from the server sequence, create tables without a `nextval` column default, and route INSERT/UPDATE/DELETE so ActiveRecord CRUD works transparently against a remote quack server
+- Gracefully stop the quack server: `QuackServer#stop` now calls quack's in-band `quack_stop()` (closing the connection alone does not stop the listener), and `QuackServer#wait` / the `duckdb:quack:serve` task shut down on SIGINT and SIGTERM
 
 ## [0.1.1] - 2026-07-08
 

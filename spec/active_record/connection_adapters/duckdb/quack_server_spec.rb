@@ -122,16 +122,32 @@ RSpec.describe ActiveRecord::ConnectionAdapters::Duckdb::QuackServer do
   end
 
   describe '#stop' do
-    it 'closes the connection and clears it' do
+    it 'stops each served uri via quack_stop, then closes and clears the connection' do
       raw = instance_double(DuckDB::Connection, execute: nil, close: nil)
+      # Closing the connection alone does not stop the listener, so stop must call
+      # quack_stop() for every uri quack_server_list() reports.
+      allow(raw).to receive(:query).and_return([['quack:localhost:9494']])
       db = instance_double(DuckDB::Database, connect: raw)
       allow(DuckDB::Database).to receive(:open).and_return(db)
 
       server = described_class.new.start
       server.stop
 
+      expect(raw).to have_received(:query).with('SELECT * FROM quack_server_list()')
+      expect(raw).to have_received(:query).with("CALL quack_stop('quack:localhost:9494')")
       expect(raw).to have_received(:close)
       expect(server.connection).to be_nil
+    end
+
+    it 'tolerates a server that is no longer serving' do
+      raw = instance_double(DuckDB::Connection, execute: nil, close: nil)
+      allow(raw).to receive(:query).and_raise(DuckDB::Error)
+      db = instance_double(DuckDB::Database, connect: raw)
+      allow(DuckDB::Database).to receive(:open).and_return(db)
+
+      server = described_class.new.start
+      expect { server.stop }.not_to raise_error
+      expect(raw).to have_received(:close)
     end
   end
 end

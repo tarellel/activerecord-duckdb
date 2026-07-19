@@ -32,6 +32,9 @@ module ActiveRecord
         # Minimum token length enforced by the quack server.
         MIN_TOKEN_LENGTH = 4
 
+        # Signals that trigger a graceful shutdown from {#wait}.
+        SHUTDOWN_SIGNALS = %w[INT TERM].freeze
+
         # @return [String] the database opened and served (file path or ':memory:')
         attr_reader :database
         # @return [String] the quack bind URI, e.g. "quack:localhost:9494"
@@ -103,23 +106,51 @@ module ActiveRecord
           self
         end
 
-        # Blocks the current thread indefinitely to keep the background listener
-        # alive. Returns when interrupted (e.g. Ctrl-C).
+        # Blocks the current thread to keep the background listener alive, returning
+        # when the process is asked to stop. Handles both SIGINT (Ctrl-C) and SIGTERM
+        # (the signal `kill`, Docker, systemd, and foreman send) so the caller can run
+        # {#stop} for a graceful shutdown afterwards.
         # @return [void]
         def wait
-          sleep
+          running = true
+          # A finite sleep loop rather than a blocking wait: the quack listener is a
+          # native thread invisible to Ruby, so a blocking Queue/`sleep`-forever on the
+          # sole Ruby thread would trip the deadlock detector. A trapped signal both
+          # flips the flag and interrupts the current sleep, so shutdown is prompt.
+          previous = SHUTDOWN_SIGNALS.to_h { |sig| [sig, Signal.trap(sig) { running = false }] }
+          sleep(1) while running
         rescue Interrupt
           nil
+        ensure
+          previous&.each { |sig, handler| Signal.trap(sig, handler || 'DEFAULT') }
         end
 
         # Stops serving and closes the connection.
+        #
+        # Closing the connection alone does NOT stop the quack listener, so this first
+        # asks the server to stop via quack_stop(); otherwise the listener would keep
+        # accepting clients until the process exits.
         # @return [void]
         def stop
+          stop_serving
           @connection&.close
           @connection = nil
         end
 
         private
+
+        # Asks the server to stop serving every URI it is currently bound to. Safe to
+        # call when nothing is being served.
+        # @return [void]
+        def stop_serving
+          return unless @connection
+
+          @connection.query('SELECT * FROM quack_server_list()').to_a.each do |row|
+            @connection.query("CALL quack_stop(#{quote(row.first)})")
+          end
+        rescue DuckDB::Error
+          nil
+        end
 
         # @return [Boolean] whether the served database is in-memory
         def memory?

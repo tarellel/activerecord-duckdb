@@ -17,7 +17,8 @@ namespace :duckdb do
       )
 
       server.start
-      warn "DuckDB quack server: serving '#{server.database}' on '#{server.bind}' (Ctrl-C to stop)"
+      warn "DuckDB quack server: serving '#{server.database}' on '#{server.bind}' " \
+           '(stop with Ctrl-C, or SIGTERM from kill/Docker/systemd)'
       warn 'WARNING: no token set; the server generated one at startup and all queries are allowed.' unless server.token
 
       server.wait

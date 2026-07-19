@@ -328,19 +328,32 @@ workers, Sidekiq, and a console) share **one writable** DuckDB database concurre
 embedded/in-process DuckDB cannot do because of its single-writer file lock. To get that, run a
 **dedicated, long-lived server process** and point every app process at it as a client.
 
-This gem ships a rake task and a `QuackServer` class to launch one:
+This gem ships a rake task and a `QuackServer` class to launch one.
+
+**Rake task**
 
 ```bash
-# Serve a file-backed database so its data survives restarts
+bundle exec rake duckdb:quack:serve
+```
+
+Starts a long-lived quack server in the foreground and blocks until it receives SIGINT (Ctrl-C) or
+SIGTERM. It is configured through environment variables:
+
+| Variable                    | Default                 | Description                                             |
+| --------------------------- | ----------------------- | ------------------------------------------------------- |
+| `DATABASE`                  | `:memory:`              | File path to serve, or `:memory:`                       |
+| `BIND`                      | `quack:localhost:9494`  | Bind URI                                                |
+| `QUACK_TOKEN`               | —                       | Auth token (min. 4 chars); if unset the server generates one and allows all queries |
+| `QUACK_EXTENSIONS`          | —                       | Extra extensions to load, comma-separated               |
+| `QUACK_ALLOW_OTHER_HOSTNAME`| —                       | Set to `1` to bind a non-localhost address (e.g. `0.0.0.0`) |
+
+```bash
+# Serve a file-backed database (its data survives restarts) on a public address
 DATABASE=db/shared.duckdb BIND=quack:0.0.0.0:9494 QUACK_TOKEN=super_secret \
   QUACK_ALLOW_OTHER_HOSTNAME=1 bundle exec rake duckdb:quack:serve
 ```
 
-Environment variables: `DATABASE` (file path or `:memory:`, default `:memory:`), `BIND`
-(default `quack:localhost:9494`), `QUACK_TOKEN`, `QUACK_EXTENSIONS` (comma-separated), and
-`QUACK_ALLOW_OTHER_HOSTNAME=1` (required to bind a non-localhost address such as `0.0.0.0`).
-
-Or from Ruby:
+**Or from Ruby**
 
 ```ruby
 server = ActiveRecord::ConnectionAdapters::Duckdb::QuackServer.new(
@@ -349,8 +362,16 @@ server = ActiveRecord::ConnectionAdapters::Duckdb::QuackServer.new(
   token: ENV['QUACK_TOKEN']
 )
 server.start # non-blocking; the listener runs in a background thread
-server.wait  # keep this process alive (Ctrl-C to stop)
+server.wait  # keep this process alive until SIGINT/SIGTERM
+server.stop  # gracefully stop serving (quack_stop) and close the connection
 ```
+
+**Stopping the server.** The server stops gracefully on **Ctrl-C (SIGINT)** or **SIGTERM** — the
+signal `kill`, Docker, systemd, and foreman send — so a process manager can shut it down cleanly.
+`QuackServer#stop` calls quack's in-band `quack_stop()`; simply closing the connection does **not**
+stop the listener. Because `quack_stop()` only affects the server within its own process, there is
+no separate "stop" rake task — stop the serving process the usual way (Ctrl-C, `kill <pid>`, or your
+process manager) and the shutdown is handled gracefully.
 
 Important:
 
