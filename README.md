@@ -292,6 +292,35 @@ Notes:
   the adapter's secure defaults remain in effect. The explicit `INSTALL` performs a one-time
   network fetch of the extension on first connection.
 
+##### Schema, migrations, and integer primary keys over quack
+
+Ordinary integer (auto-increment) primary keys work over quack — no need to switch your app to
+UUIDs. The adapter adapts transparently because a quack `ATTACH` has some hard constraints:
+
+- A column with a function-valued `DEFAULT` (such as `nextval(...)`) breaks `ATTACH`, and the
+  client cannot see the server's sequences through the attached catalog.
+- `INSERT ... RETURNING`, `UPDATE`, and `DELETE` are not supported directly on an attached quack
+  table.
+
+To make Rails work anyway, in quack mode the adapter:
+
+- Creates tables **without** a `DEFAULT nextval()` column default, and creates the backing
+  sequence on the server via quack's server-side query channel.
+- **Prefetches** the next id from that sequence and includes it in the `INSERT` (so no
+  `RETURNING` is needed).
+- Routes `UPDATE`/`DELETE` to the server the same way, returning the affected-row count.
+
+**Run your migrations through the quack connection.** Point Rails at the quack server (a
+`quack:` block in `database.yml`) and run `rails db:migrate` as usual — `create_table` builds the
+schema on the server in the quack-compatible shape. After that, `Model.create`, `find`, `where`,
+`update`, and `destroy` all behave normally:
+
+```ruby
+User.create!(name: "alice")   # => #<User id: 1, ...>  (id prefetched from the server sequence)
+User.where(name: "alice").update_all(active: true)
+User.last.destroy
+```
+
 ##### Running a quack server
 
 The real value of quack is letting **multiple separate processes** (e.g. several Rails/Puma

@@ -64,8 +64,11 @@ module ActiveRecord
             create_sequence_safely(sequence_name, table_name, start_with: start_with)
           end
 
-          # Store sequence info for later use during table creation
-          @pending_sequence_default = ({ table: table_name, column: pk_column_name, sequence: sequence_name } if needs_sequence_default && sequence_name && pk_column_name)
+          # Store sequence info for later use during table creation.
+          # In quack mode we deliberately do NOT inject a DEFAULT nextval() column
+          # default: a function-valued default breaks quack ATTACH. The id is instead
+          # prefetched from the sequence via quack_query() on insert (prefetch_primary_key?).
+          @pending_sequence_default = ({ table: table_name, column: pk_column_name, sequence: sequence_name } if needs_sequence_default && sequence_name && pk_column_name && !quack_enabled?)
 
           begin
             # Now create the table with Rails handling the standard creation
@@ -89,6 +92,10 @@ module ActiveRecord
           sql = "CREATE SEQUENCE #{quote_table_name(sequence_name)}"
           sql << " START #{start_with.to_i}" if start_with != 1
           sql << " INCREMENT #{increment_by.to_i}" if increment_by != 1
+          # CREATE SEQUENCE is not implemented over a quack ATTACH, so route it to the
+          # server via quack_query() where the sequence must actually live.
+          return quack_query_exec(sql) if quack_enabled?
+
           execute(sql, 'Create Sequence')
         end
 
@@ -107,6 +114,13 @@ module ActiveRecord
         # @param sequence_name [String] The name of the sequence to check
         # @return [Boolean] true if the sequence exists, false otherwise
         def sequence_exists?(sequence_name)
+          # Over quack the sequence lives on the server and isn't visible through the
+          # attached catalog; check for it server-side via quack_query() instead.
+          if quack_enabled?
+            count = quack_query_value("SELECT COUNT(*) FROM duckdb_sequences() WHERE sequence_name = #{quote(sequence_name)}")
+            return count.to_i.positive?
+          end
+
           # Try to get next value from sequence in a way that doesn't consume it
           # Use a transaction that we can rollback to avoid side effects
           transaction do
@@ -545,8 +559,11 @@ module ActiveRecord
           # Parse null constraint (DuckDB: not_null=1 means NOT NULL)
           is_null = !not_null.in?([1, true])
 
-          # Detect auto-increment columns
-          is_integer_pk = pk && formatted_type.upcase.in?(%w[INTEGER BIGINT])
+          # Detect auto-increment columns. Over quack the integer PK is NOT
+          # auto-incremented by the database (no DEFAULT nextval); it is prefetched and
+          # supplied in the INSERT. Marking it auto_increment would make Rails treat the
+          # column as auto-populated and discard the prefetched value.
+          is_integer_pk = pk && formatted_type.upcase.in?(%w[INTEGER BIGINT]) && !quack_enabled?
 
           {
             name: column_name.to_s,
@@ -557,15 +574,21 @@ module ActiveRecord
             collation: collation_name.to_s.presence,
             comment: comment.to_s.presence,
             auto_increment: is_integer_pk,
-            rowid: pk && column_name == 'id'
+            # Over quack the id is prefetched, not auto-incremented by the DB, so it must
+            # not be treated as a rowid (which also marks the column auto-populated).
+            rowid: pk && column_name == 'id' && !quack_enabled?
           }
         end
 
         # Parses column default, separating static values from sequence functions.
         # @return [Array<Object, String>] [default_value, default_function]
         def parse_column_default(table_name, column_name, column_default, formatted_type, pk)
-          # Integer primary key named 'id' - assume sequence exists
-          if pk&.in?([true, 1]) && formatted_type.upcase.in?(%w[INTEGER BIGINT]) && column_name == 'id'
+          # Integer primary key named 'id' - assume sequence exists.
+          # In quack mode the column genuinely has no DEFAULT (it can't -- a function
+          # default breaks quack ATTACH), and the id is prefetched instead. Synthesizing
+          # a nextval default_function here would mark the column auto-populated and
+          # defeat the prefetch, so skip it over quack.
+          if pk&.in?([true, 1]) && formatted_type.upcase.in?(%w[INTEGER BIGINT]) && column_name == 'id' && !quack_enabled?
             # Build the sequence name and quote it properly for the nextval expression
             seq_name = "#{table_name}_#{column_name}_seq"
             [nil, "nextval(#{quote(seq_name)})"]

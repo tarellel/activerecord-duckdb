@@ -256,17 +256,20 @@ module ActiveRecord
       end
 
       # Indicates whether the adapter supports INSERT...RETURNING syntax
-      # DuckLake does NOT support INSERT...RETURNING, so we check for DuckLake mode
-      # @return [Boolean] true for regular DuckDB, false for DuckLake
+      # DuckLake does NOT support INSERT...RETURNING. Over quack, RETURNING is broken
+      # (it returns a row count, not the projected columns) and unnecessary since the
+      # primary key is prefetched, so it is disabled there too.
+      # @return [Boolean] true for regular DuckDB, false for DuckLake or quack
       def use_insert_returning?
-        !ducklake?
+        !ducklake? && !quack_enabled?
       end
 
       # Indicates whether the adapter supports INSERT RETURNING for Rails 8
-      # DuckLake does NOT support INSERT...RETURNING, so we check for DuckLake mode
-      # @return [Boolean] true for regular DuckDB, false for DuckLake
+      # DuckLake does NOT support INSERT...RETURNING; neither does quack (see
+      # use_insert_returning?), where the primary key is prefetched instead.
+      # @return [Boolean] true for regular DuckDB, false for DuckLake or quack
       def supports_insert_returning?
-        !ducklake?
+        !ducklake? && !quack_enabled?
       end
 
       # Detects if the current database is a DuckLake database
@@ -340,11 +343,23 @@ module ActiveRecord
       # @raise [SavepointsNotSupported] always raises since DuckDB doesn't support savepoints
       def release_savepoint(_name = nil) = raise SavepointsNotSupported
 
-      # Determines if primary key should be prefetched before insert
+      # Determines if primary key should be prefetched before insert.
+      #
+      # Normally false: DuckDB fills integer primary keys from a DEFAULT nextval()
+      # sequence, so the value is excluded from INSERT. Over a quack connection that
+      # DEFAULT can't exist (a function-valued column default breaks quack ATTACH, and
+      # the client can't reach the server's sequence through the attached catalog), so
+      # in quack mode we prefetch the id via quack_query() and include it in the INSERT.
       # @param _table_name [String] The table name (unused)
-      # @return [Boolean] always returns false to exclude auto-increment columns from INSERT
+      # @return [Boolean] true in quack mode, false otherwise
       def prefetch_primary_key?(_table_name)
-        false
+        quack_enabled?
+      end
+
+      # Whether this connection is a quack client (a remote DuckDB server).
+      # @return [Boolean] true if a quack: block configured a remote connection
+      def quack_enabled?
+        !@quack_url.nil?
       end
 
       # Returns the sequence name for a serial column
@@ -489,11 +504,103 @@ module ActiveRecord
         end
       end
 
-      # Generates SQL for getting the next sequence value
+      # Returns the next value for a sequence.
+      #
+      # In quack mode this is called by Rails' prefetch path (see prefetch_primary_key?)
+      # and MUST return the actual next integer, which is fetched from the server via
+      # quack_query() (the sequence isn't visible through the attached catalog). Outside
+      # quack mode it returns the SQL expression string used inline as a column default.
       # @param sequence_name [String] The name of the sequence
-      # @return [String] SQL expression for next sequence value
+      # @return [Integer, String] the next value (quack mode) or a nextval() SQL expression
       def next_sequence_value(sequence_name)
+        return quack_query_value("SELECT nextval(#{quote(sequence_name)})") if quack_enabled?
+
         "nextval(#{quote(sequence_name)})"
+      end
+
+      # Runs a single SQL statement on the remote quack server via quack_query() and
+      # returns the first column of the first row. Used for sequence operations that
+      # the attached catalog cannot serve (nextval, sequence existence checks).
+      # @param sql [String] the SQL to execute server-side
+      # @return [Object, nil] the first scalar of the result, or nil
+      def quack_query_value(sql)
+        result = raw_connection.query("SELECT * FROM quack_query(#{quote(@quack_url)}, $QUACKSQL$#{sql}$QUACKSQL$)")
+        result.to_a.first&.first
+      end
+
+      # Runs a statement on the remote quack server via quack_query() for its side
+      # effect (e.g. CREATE SEQUENCE, which is not implemented over a quack ATTACH).
+      # A trailing SELECT guarantees quack_query() has a result set to return.
+      # @param sql [String] the SQL to execute server-side
+      # @return [void]
+      def quack_query_exec(sql)
+        raw_connection.query("SELECT * FROM quack_query(#{quote(@quack_url)}, $QUACKSQL$#{sql}; SELECT 1$QUACKSQL$)")
+        nil
+      end
+
+      # Inserts a record and returns its id.
+      #
+      # Over quack we can't rely on INSERT...RETURNING (it returns a row count, not the
+      # projected columns). The primary key is prefetched (prefetch_primary_key?), so it is
+      # already present in the INSERT and known to Rails as +id_value+. We run the insert
+      # without RETURNING and hand that prefetched value straight back, matching the shape
+      # Rails expects: an array when returning columns were requested, a scalar otherwise.
+      # @return [Object, Array, nil] the inserted id (array-wrapped when returning requested)
+      def insert(arel, name = nil, pk = nil, id_value = nil, sequence_name = nil, binds = [], returning: nil)
+        return super unless quack_enabled?
+
+        sql, binds = to_sql_and_binds(arel, binds)
+        exec_insert(sql, name, binds, pk, sequence_name)
+        returning.blank? ? id_value : Array(id_value)
+      end
+
+      # Executes an UPDATE and returns the number of affected rows.
+      # A quack ATTACH cannot UPDATE the remote table directly ("Can only update base
+      # table"), so the statement is run server-side via quack_query(), which returns the
+      # affected-row count. See quack_exec_write.
+      # @return [Integer] number of rows affected
+      def exec_update(sql, name = nil, binds = [])
+        return super unless quack_enabled?
+
+        quack_exec_write(sql, name, binds)
+      end
+
+      # Executes a DELETE and returns the number of affected rows. Routed via quack_query()
+      # over quack for the same reason as exec_update. Defined explicitly rather than aliased
+      # so bare +super+ resolves to the parent DELETE path (aliases keep the original name).
+      # @return [Integer] number of rows affected
+      def exec_delete(sql, name = nil, binds = [])
+        return super unless quack_enabled?
+
+        quack_exec_write(sql, name, binds)
+      end
+
+      # Runs a write statement (UPDATE/DELETE) on the remote quack server via quack_query()
+      # and returns the affected-row count it reports. quack_query() takes a SQL string, so
+      # bind parameters are inlined first.
+      # @param sql [String] the statement with '?' placeholders
+      # @param name [String, nil] log label
+      # @param binds [Array] bind parameters
+      # @return [Integer] number of rows affected
+      def quack_exec_write(sql, name, binds)
+        full_sql = quack_inline_binds(sql, binds)
+        log(sql, name, binds) do
+          quack_query_value(full_sql).to_i
+        end
+      end
+
+      # Inlines bind parameters into a SQL string, replacing each '?' placeholder in order
+      # with its quoted value. Rails-generated UPDATE/DELETE statements only use '?' as
+      # placeholders (literals are passed as binds), so positional replacement is safe here.
+      # @param sql [String] the statement with '?' placeholders
+      # @param binds [Array] bind parameters
+      # @return [String] the statement with values inlined
+      def quack_inline_binds(sql, binds)
+        casted = type_casted_binds(binds)
+        return sql if casted.empty?
+
+        index = -1
+        sql.gsub('?') { quote(casted[index += 1]) }
       end
 
       # Generates default sequence name following PostgreSQL/Oracle conventions
@@ -824,6 +931,13 @@ module ActiveRecord
         raw_connection.execute("CREATE SECRET (TYPE quack, TOKEN #{quote(cfg[:token])}, SCOPE #{quote(url)})") if cfg[:token].present?
         raw_connection.execute("ATTACH #{quote(url)} AS #{name} (TYPE quack)")
         raw_connection.execute("USE #{name}") unless cfg[:use] == false
+
+        # Remember the remote URI so sequence/prefetch operations can reach the
+        # server through the quack_query() side-channel. Over a quack ATTACH the
+        # remote catalog exposes tables (queryable) but NOT sequences, and
+        # CREATE SEQUENCE is not implemented; quack_query() runs SQL server-side
+        # where the sequence actually lives.
+        @quack_url = url
       end
 
       # Sets the active database using USE statement
