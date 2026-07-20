@@ -92,6 +92,8 @@ RSpec/DescribeClass:
     - spec/ducklake_spec.rb
     - spec/active_record/connection_adapters/duckdb/ducklake_migration_spec.rb
     - spec/active_record/connection_adapters/duckdb/ducklake_schema_compatibility_spec.rb
+    - spec/active_record/connection_adapters/duckdb/quack_spec.rb
+    - spec/active_record/connection_adapters/duckdb/quack_integer_pk_spec.rb
     - spec/active_record/connection_adapters/duckdb/schema_dumper_spec.rb
     - spec/active_record/connection_adapters/duckdb/timestamp_timezone_spec.rb
     - spec/active_record/connection_adapters/duckdb/transaction_spec.rb
