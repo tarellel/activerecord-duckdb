@@ -26,6 +26,7 @@ if defined?(Rails)
         # @return [void]
         rake_tasks do
           require 'active_record/tasks/duckdb_database_tasks'
+          load File.expand_path('active_record/tasks/duckdb_quack.rake', __dir__)
         end
 
         # Sets up DuckDB adapter integration when ActiveRecord loads

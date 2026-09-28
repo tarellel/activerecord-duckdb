@@ -230,6 +230,161 @@ development:
   use_database: analytics # Switch to the attached database
 ```
 
+#### Remote Server (quack protocol)
+
+DuckDB 1.5.3+ ships the [quack](https://duckdb.org/quack/) core extension, which lets an
+embedded DuckDB act as a **client** to a remote DuckDB **server** over the `quack:` protocol
+(HTTP, default port `9494`). This adapter can connect to such a server through an optional
+`quack:` configuration block.
+
+This feature is **off by default**. When the `quack:` block is absent, the adapter continues to
+use a standalone file-based or in-memory database exactly as before.
+
+On the server, start a DuckDB instance serving over quack. You can do this in raw SQL:
+
+```sql
+CALL quack_serve('quack:0.0.0.0:9494', token => 'super_secret', allow_other_hostname => true);
+```
+
+...or use the launcher this gem provides (see [Running a quack server](#running-a-quack-server)
+below).
+
+Then point the adapter at it. The local `database:` acts as the client's control database
+(in-memory is typical); the remote server's data is reached through the attached alias:
+
+```yaml
+production:
+  adapter: duckdb
+  database: ":memory:"                       # local client control database
+  quack:
+    url: "quack:analytics.example.com:9494"   # required: remote server URI
+    token: <%= ENV["QUACK_TOKEN"] %>          # optional: auth token
+    as: remote                                # optional: ATTACH alias (default: remote)
+    use: true                                 # optional: USE the attached db (default: true)
+```
+
+The adapter installs and loads the quack extension for you, so you do **not** need to add it to
+the `extensions:` list. Under the hood, a populated block emits (in order):
+
+```sql
+INSTALL quack;
+LOAD quack;
+CREATE SECRET (TYPE quack, TOKEN 'super_secret', SCOPE 'quack:analytics.example.com:9494'); -- only when a token is given
+ATTACH 'quack:analytics.example.com:9494' AS remote (TYPE quack);
+USE remote;                                                                                  -- unless use: false
+```
+
+Configuration options:
+
+| Option  | Required | Default  | Description                                                     |
+| ------- | -------- | -------- | --------------------------------------------------------------- |
+| `url`   | yes      | —        | Remote server URI, e.g. `"quack:host:9494"`                     |
+| `token` | no       | —        | Auth token; registered as a scoped quack `SECRET` when present  |
+| `as`    | no       | `remote` | Alias used by `ATTACH ... AS <as>`                              |
+| `use`   | no       | `true`   | Whether to `USE` the attached database after attaching          |
+
+Notes:
+
+- A `quack:` block that is empty, or whose keys are all blank, is treated as disabled (no-op).
+- A block that provides other keys but omits `url` raises an error rather than producing an
+  invalid connection.
+- Because quack is a **core** extension, no `allow_community_extensions` relaxation is needed and
+  the adapter's secure defaults remain in effect. The explicit `INSTALL` performs a one-time
+  network fetch of the extension on first connection.
+
+##### Schema, migrations, and integer primary keys over quack
+
+Ordinary integer (auto-increment) primary keys work over quack — no need to switch your app to
+UUIDs. The adapter adapts transparently because a quack `ATTACH` has some hard constraints:
+
+- A column with a function-valued `DEFAULT` (such as `nextval(...)`) breaks `ATTACH`, and the
+  client cannot see the server's sequences through the attached catalog.
+- `INSERT ... RETURNING`, `UPDATE`, and `DELETE` are not supported directly on an attached quack
+  table.
+
+To make Rails work anyway, in quack mode the adapter:
+
+- Creates tables **without** a `DEFAULT nextval()` column default, and creates the backing
+  sequence on the server via quack's server-side query channel.
+- **Prefetches** the next id from that sequence and includes it in the `INSERT` (so no
+  `RETURNING` is needed).
+- Routes `UPDATE`/`DELETE` to the server the same way, returning the affected-row count.
+
+**Run your migrations through the quack connection.** Point Rails at the quack server (a
+`quack:` block in `database.yml`) and run `rails db:migrate` as usual — `create_table` builds the
+schema on the server in the quack-compatible shape. After that, `Model.create`, `find`, `where`,
+`update`, and `destroy` all behave normally:
+
+```ruby
+User.create!(name: "alice")   # => #<User id: 1, ...>  (id prefetched from the server sequence)
+User.where(name: "alice").update_all(active: true)
+User.last.destroy
+```
+
+##### Running a quack server
+
+The real value of quack is letting **multiple separate processes** (e.g. several Rails/Puma
+workers, Sidekiq, and a console) share **one writable** DuckDB database concurrently — something
+embedded/in-process DuckDB cannot do because of its single-writer file lock. To get that, run a
+**dedicated, long-lived server process** and point every app process at it as a client.
+
+This gem ships a rake task and a `QuackServer` class to launch one.
+
+**Rake task**
+
+```bash
+bundle exec rake duckdb:quack:serve
+```
+
+Starts a long-lived quack server in the foreground and blocks until it receives SIGINT (Ctrl-C) or
+SIGTERM. It is configured through environment variables:
+
+| Variable                    | Default                 | Description                                             |
+| --------------------------- | ----------------------- | ------------------------------------------------------- |
+| `DATABASE`                  | `:memory:`              | File path to serve, or `:memory:`                       |
+| `BIND`                      | `quack:localhost:9494`  | Bind URI                                                |
+| `QUACK_TOKEN`               | —                       | Auth token (min. 4 chars); if unset the server generates one and allows all queries |
+| `QUACK_EXTENSIONS`          | —                       | Extra extensions to load, comma-separated               |
+| `QUACK_ALLOW_OTHER_HOSTNAME`| —                       | Set to `1` to bind a non-localhost address (e.g. `0.0.0.0`) |
+
+```bash
+# Serve a file-backed database (its data survives restarts) on a public address
+DATABASE=db/shared.duckdb BIND=quack:0.0.0.0:9494 QUACK_TOKEN=super_secret \
+  QUACK_ALLOW_OTHER_HOSTNAME=1 bundle exec rake duckdb:quack:serve
+```
+
+**Or from Ruby**
+
+```ruby
+server = ActiveRecord::ConnectionAdapters::Duckdb::QuackServer.new(
+  database: 'db/shared.duckdb',
+  bind: 'quack:localhost:9494',
+  token: ENV['QUACK_TOKEN']
+)
+server.start # non-blocking; the listener runs in a background thread
+server.wait  # keep this process alive until SIGINT/SIGTERM
+server.stop  # gracefully stop serving (quack_stop) and close the connection
+```
+
+**Stopping the server.** The server stops gracefully on **Ctrl-C (SIGINT)** or **SIGTERM** — the
+signal `kill`, Docker, systemd, and foreman send — so a process manager can shut it down cleanly.
+`QuackServer#stop` calls quack's in-band `quack_stop()`; simply closing the connection does **not**
+stop the listener. Because `quack_stop()` only affects the server within its own process, there is
+no separate "stop" rake task — stop the serving process the usual way (Ctrl-C, `kill <pid>`, or your
+process manager) and the shutdown is handled gracefully.
+
+Important:
+
+- **Run the server as its own process, not inside your Rails app's connection.** Do not try to
+  serve and connect as a client from the *same* process — beyond offering no benefit (you'd be
+  routing queries over an HTTP loopback to a database you could query directly), it is unstable
+  at process teardown. Server and clients must be **separate processes**.
+- Auth tokens must be **at least 4 characters**; `QuackServer` raises early if a shorter one is
+  given. If no token is set, the server generates one at startup and (by default) allows all
+  queries — set a token for anything beyond local experimentation.
+- When binding a public address, front the server with a TLS-terminating reverse proxy (e.g.
+  nginx) rather than exposing quack directly, as the DuckDB documentation recommends.
+
 ### Sample App setup
 
 The following steps are required to setup a sample application using the `activerecord-duckdb` gem:
